@@ -59,8 +59,8 @@ export function xhrHook(url: string | string[], modifyOpen?: (args: XMLHttpReque
             })
         } catch (e) { debug.error("modifyResponse of xhrhook", one, e) }
     }
-    const iid = rules.push([one, two]);
-    return () => { removeXhrhook(iid) };
+    id = rules.push([one, two]);
+    return () => { removeXhrhook(id) };
 }
 /**
  * `xhrhook`的异步版本，可以用异步方法获取到的返回值替换xhr请求返回值。  
@@ -127,8 +127,8 @@ xhrHook.async = (url: string | string[], condition?: (args: XMLHttpRequestOpenPa
             }
         } catch (e) { debug.error("condition of xhrhook", one, e) }
     }
-    const iid = rules.push([one, two]);
-    return () => { removeXhrhook(iid) };
+    id = rules.push([one, two]);
+    return () => { removeXhrhook(id) };
 }
 /**
  * 注销xhrhook以节约开销，只在注册时设置了`once=false`时才需要使用本方法！ 

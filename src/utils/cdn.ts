@@ -5,7 +5,7 @@ class Cdn {
      * @param hash 默认文件版本哈希值
      * @param protocol url协议
      */
-    constructor(private host = "Github", private hash?: string, private protocol = "https") { }
+    constructor(private host = "jsdelivr", private hash?: string, private protocol = "https") { }
     /**
      * 获取cdn链接
      * @param path 文件相对路径
@@ -14,9 +14,9 @@ class Cdn {
     encode(path: string, hash = this.hash) {
         switch (this.host) {
             case 'jsdelivr':
-                return `${this.protocol}://fastly.jsdelivr.net/gh/followmypeach/Bilibili-Old${hash ? `@${hash}` : ''}${path}`;
+                return `${this.protocol}://fastly.jsdelivr.net/gh/FMPeach/Bilibili-Old${hash ? `@${hash}` : ''}${path}`;
             default:
-                return `${this.protocol}://github.com/followmypeach/Bilibili-Old/raw/${hash || 'master'}${path}`;
+                return `${this.protocol}://raw.githubusercontent.com/FMPeach/Bilibili-Old/${hash || 'master'}${path}`;
         }
     }
     /** 更新默认值 */

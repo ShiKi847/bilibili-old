@@ -14,6 +14,7 @@ import { apiBiliplusView } from "../io/api-biliplus-view";
 import { apiViewDetail, ApiViewDetail } from "../io/api-view-detail";
 import menuConfig from '../json/sort.txt';
 import toview from '../json/toview.json';
+import { AV } from "../utils/av";
 import { addCss } from "../utils/element";
 import { objUrl, urlObj } from "../utils/format/url";
 import { propertyHook } from "../utils/hook/method";
@@ -27,6 +28,9 @@ import { Header } from "./header";
 import { Page } from "./page";
 
 export class PageAV extends Page {
+
+    /** 原始首屏状态备份 */
+    protected rawInitialState: any;
 
     /** 销毁标记，当前已不是av页，部分回调禁止生效 */
     protected destroy = false;
@@ -48,7 +52,19 @@ export class PageAV extends Page {
 
     constructor() {
         super(html);
-        location.href.replace(/av\d+/i, d => this.aid = <any>d.slice(2));
+        this.rawInitialState = (window as any).__INITIAL_STATE__;
+        if (!this.aid) {
+            location.href.replace(/av\d+/i, d => this.aid = <any>d.slice(2));
+            if (!this.aid) {
+                const bv = location.pathname.match(/\/(BV[\w]+)/i);
+                if (bv) {
+                    this.aid = Number(AV.fromBV(bv[1]));
+                }
+            }
+            if (!this.aid && this.rawInitialState?.aid) {
+                this.aid = Number(this.rawInitialState.aid);
+            }
+        }
         new Comment();
         this.like = new Like();
         propertyHook(window, '__INITIAL_STATE__', undefined);
@@ -150,43 +166,84 @@ export class PageAV extends Page {
         }
     }
 
-    /** 检查页面是否失效及bangumi跳转 */
+    /** 构建 Detail 响应结构 */
+    protected buildDetailFromState(state: any) {
+        const view = { ...state.videoData };
+        if (!view.pages || !view.pages.length) {
+            view.pages = [{ cid: view.cid, page: 1, from: 'vupload', part: view.title, duration: view.duration }];
+        }
+        if (view.stat) {
+            view.stat = { ...view.stat };
+        }
+        return {
+            code: 0,
+            message: "0",
+            ttl: 1,
+            data: {
+                View: view,
+                Card: {
+                    card: state.upData || (view.owner ? { mid: view.owner.mid, name: view.owner.name, face: view.owner.face } : {}),
+                    archive_count: (state.upData && state.upData.archiveCount) || 0
+                },
+                Tags: (state.tags || []).map((t: any) => typeof t === 'string' ? { tag_name: t } : t),
+                Related: state.related || [],
+                Reply: { page: {}, replies: [] }
+            }
+        };
+    }
+
+    /** 处理视频详情数据（注册 stat、staff、合集、推荐相关 hook） */
+    protected handleDetailData(res: any) {
+        if (res && res.data) {
+            if (res.data.View) {
+                const response = `{ "code": 0, "message": "0", "ttl": 1, "data": ${JSON.stringify(res.data.View.stat)} }`;
+                xhrHook.async('/x/web-interface/archive/stat?', undefined, async () => {
+                    // 原接口被429，使用本处数据替代
+                    return { response, responseText: response, responseType: 'json' };
+                });
+                Promise.resolve().then(() => {
+                    user.userStatus!.staff && res.data.View.staff && this.staff(res.data.View.staff);
+                });
+                if (user.userStatus!.ugcSection && res.data.View.ugc_season) {
+                    this.ugcSection(res.data.View.ugc_season, res.data.View.owner);
+                }
+                // 记录视频数据
+                videoInfo.aidDatail(res.data.View);
+            }
+            if (res.data.Related) {
+                const response = JSON.stringify(res.data.Related.map((d: any) => {
+                    return [d.pic, d.aid, d.title, d.stat ? d.stat.view : '', d.stat ? d.stat.danmaku : '', , d.stat ? d.stat.favorite : ''];
+                }));
+                xhrHook.async('comment.bilibili.com/playtag', undefined, async () => {
+                    // 推荐视频接口404
+                    return { response, responseText: response, responseType: 'json' };
+                }, false);
+            }
+        }
+    }
+
+    /** 检查页面是否失效及bangumi跳转，拦截 view/detail jsonp 请求 */
     protected aidLostCheck() {
-        jsonpHook("api.bilibili.com/x/web-interface/view/detail", undefined, (res, r, call) => {
-            if (0 !== res.code) {
-                const obj = urlObj(r);
-                if (obj.aid) {
-                    this.aid = <number>obj.aid;
-                    this.getVideoInfo().then(d => call(d)).catch(() => call(res));
-                    return true
-                }
-            } else {
-                if (res.data) {
-                    if (res.data.View) {
-                        const response = `{ "code": 0, "message": "0", "ttl": 1, "data": ${JSON.stringify(res.data.View.stat)} }`;
-                        xhrHook.async('/x/web-interface/archive/stat?', undefined, async () => {
-                            // 原接口被429，使用本处数据替代
-                            return { response, responseText: response, responseType: 'json' };
-                        });
-                        Promise.resolve().then(() => {
-                            user.userStatus!.staff && res.data.View.staff && this.staff(res.data.View.staff);
-                        });
-                        if (user.userStatus!.ugcSection && res.data.View.ugc_season) {
-                            this.ugcSection(res.data.View.ugc_season, res.data.View.owner);
-                        }
-                        // 记录视频数据
-                        videoInfo.aidDatail(res.data.View);
-                    }
-                    if (res.data.Related) {
-                        const response = JSON.stringify(res.data.Related.map((d: any) => {
-                            return [d.pic, d.aid, d.title, d.stat.view, d.stat.danmaku, , d.stat.favorite]
-                        }));
-                        xhrHook.async('comment.bilibili.com/playtag', undefined, async () => {
-                            // 推荐视频接口404
-                            return { response, responseText: response, responseType: 'json' }
-                        }, false);
-                    }
-                }
+        jsonpHook.async("api.bilibili.com/x/web-interface/view/detail", undefined, async (r: string) => {
+            const obj = urlObj(r);
+            if (obj?.aid) {
+                this.aid = <number>obj.aid;
+            }
+            // 优先从首屏状态构造，无网络延迟且避免被风控拦截
+            if (this.rawInitialState && (this.rawInitialState.aid == this.aid || this.rawInitialState.videoData?.aid == this.aid)) {
+                const detail = this.buildDetailFromState(this.rawInitialState);
+                this.handleDetailData(detail);
+                return detail;
+            }
+            // 否则尝试通过 apiViewDetail 获取
+            try {
+                const data = await apiViewDetail(this.aid);
+                const detail = { code: 0, message: "0", ttl: 1, data };
+                this.handleDetailData(detail);
+                return detail;
+            } catch (e) {
+                // 降级兜底：通过其他接口获取失效视频或番剧重定向
+                return this.getVideoInfo();
             }
         }, false);
     }

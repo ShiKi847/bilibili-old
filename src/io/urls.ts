@@ -39,9 +39,11 @@ export class URLS {
     static readonly VIEW_DETAIL = URLS.P_AUTO + URLS.D_API + '/x/web-interface/view/detail';
     static readonly VIEW = URLS.P_AUTO + URLS.D_API + '/view';
     static readonly X_VIEW = URLS.P_AUTO + URLS.D_API + '/x/web-interface/view';
+    static readonly ARCHIVE_RELATED = URLS.P_AUTO + URLS.D_API + '/x/web-interface/archive/related';
     static readonly PAGE_LIST = URLS.P_AUTO + URLS.D_API + '/x/player/pagelist';
     static readonly TAG_INFO = URLS.P_AUTO + URLS.D_API + '/x/tag/info';
     static readonly TAG_TOP = URLS.P_AUTO + URLS.D_API + '/x/web-interface/tag/top';
+    static readonly TAG_ARCHIVE = URLS.P_AUTO + URLS.D_API + '/x/tag/archive/tags';
     static readonly BANGUMI_SEASON = URLS.P_AUTO + URLS.D_BANGUMI + '/view/web_api/season';
     static readonly SEASON_STATUS = URLS.P_AUTO + URLS.D_API + '/pgc/view/web/season/user/status';
     static readonly PGC_SEASON = URLS.P_AUTO + URLS.D_API + '/pgc/view/web/season';
