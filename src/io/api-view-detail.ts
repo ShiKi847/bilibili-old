@@ -20,13 +20,48 @@ export class ApiViewDetail {
     ttl = 1;
 }
 export async function apiViewDetail(aid: number) {
-    const response = await fetch(objUrl(URLS.VIEW_DETAIL, {
-        aid
-    }), {
-        credentials: 'include'
-    });
-    const json = await response.json();
-    return <IApiViewDetailResponse>jsonCheck(json).data;
+    try {
+        const response = await fetch(objUrl(URLS.VIEW_DETAIL, {
+            aid
+        }), {
+            credentials: 'include'
+        });
+        if (response.ok) {
+            const json = await response.json();
+            if (json && json.code === 0 && json.data) {
+                return <IApiViewDetailResponse>jsonCheck(json).data;
+            }
+        }
+    } catch { }
+
+    const viewRes = await fetch(objUrl(URLS.X_VIEW, { aid }), { credentials: 'include' });
+    const viewJson = await viewRes.json();
+    const viewData = jsonCheck(viewJson).data;
+    const detail = new ApiViewDetail();
+    detail.data.View = viewData;
+    if (viewData?.owner) {
+        detail.data.Card = <any>{
+            card: {
+                mid: viewData.owner.mid,
+                name: viewData.owner.name,
+                face: viewData.owner.face
+            },
+            archive_count: 0
+        };
+    }
+    try {
+        const [tagsRes, relatedRes] = await Promise.allSettled([
+            fetch(objUrl(URLS.TAG_ARCHIVE, { aid }), { credentials: 'include' }).then(r => r.json()),
+            fetch(objUrl(URLS.ARCHIVE_RELATED, { aid }), { credentials: 'include' }).then(r => r.json())
+        ]);
+        if (tagsRes.status === 'fulfilled' && tagsRes.value?.data) {
+            detail.data.Tags = tagsRes.value.data;
+        }
+        if (relatedRes.status === 'fulfilled' && relatedRes.value?.data) {
+            detail.data.Related = relatedRes.value.data;
+        }
+    } catch { }
+    return detail.data;
 }
 
 interface IOfficial {

@@ -43,6 +43,9 @@ import { Page } from "./page";
  */
 export class PageList extends Page {
 
+    /** 原始首屏状态备份 */
+    protected rawInitialState: any;
+
     /** 销毁标记 */
     protected destroy = false;
 
@@ -93,6 +96,7 @@ export class PageList extends Page {
 
     constructor() {
         super(html);
+        this.rawInitialState = (window as any).__INITIAL_STATE__;
 
         this.route = urlObj(location.href);
         this.isFromList = /\/list\//.test(location.pathname); 
@@ -690,42 +694,80 @@ export class PageList extends Page {
         }
     }
 
+    /** 构建 Detail 响应结构 */
+    protected buildDetailFromState(state: any) {
+        const view = { ...state.videoData };
+        if (!view.pages || !view.pages.length) {
+            view.pages = [{ cid: view.cid, page: 1, from: 'vupload', part: view.title, duration: view.duration }];
+        }
+        if (view.stat) {
+            view.stat = { ...view.stat };
+        }
+        return {
+            code: 0,
+            message: "0",
+            ttl: 1,
+            data: {
+                View: view,
+                Card: {
+                    card: state.upData || (view.owner ? { mid: view.owner.mid, name: view.owner.name, face: view.owner.face } : {}),
+                    archive_count: (state.upData && state.upData.archiveCount) || 0
+                },
+                Tags: (state.tags || []).map((t: any) => typeof t === 'string' ? { tag_name: t } : t),
+                Related: state.related || [],
+                Reply: { page: {}, replies: [] }
+            }
+        };
+    }
+
+    /** 处理视频详情数据（注册 stat、staff、推荐相关 hook，不触发 ugcSection） */
+    protected handleDetailData(res: any) {
+        if (res && res.data) {
+            if (res.data.View) {
+                const response = `{ "code": 0, "message": "0", "ttl": 1, "data": ${JSON.stringify(res.data.View.stat)} }`;
+                xhrHook.async('/x/web-interface/archive/stat?', undefined, async () => {
+                    return { response, responseText: response, responseType: 'json' };
+                });
+                Promise.resolve().then(() => {
+                    user.userStatus!.staff && res.data.View.staff && this.staff(res.data.View.staff);
+                });
+                // 不触发 ugcSection —— 列表播放由 initList 管理
+                // 记录视频数据
+                videoInfo.aidDatail(res.data.View);
+            }
+            if (res.data.Related) {
+                const response = JSON.stringify(res.data.Related.map((d: any) => {
+                    return [d.pic, d.aid, d.title, d.stat ? d.stat.view : '', d.stat ? d.stat.danmaku : '', , d.stat ? d.stat.favorite : ''];
+                }));
+                xhrHook.async('comment.bilibili.com/playtag', undefined, async () => {
+                    return { response, responseText: response, responseType: 'json' };
+                }, false);
+            }
+        }
+    }
+
     /**
      * 检查页面是否失效及bangumi跳转
-     * 注意：与 PageAV 不同，此处不触发 ugcSection（合集播单由本类自行管理）
+     * 拦截 view/detail jsonp 请求
      */
     protected aidLostCheck() {
-        jsonpHook("api.bilibili.com/x/web-interface/view/detail", undefined, (res, r, call) => {
-            if (0 !== res.code) {
-                const obj = urlObj(r);
-                if (obj.aid) {
-                    this.aid = <number>obj.aid;
-                    this.getVideoInfo().then(d => call(d)).catch(() => call(res));
-                    return true
-                }
-            } else {
-                if (res.data) {
-                    if (res.data.View) {
-                        const response = `{ "code": 0, "message": "0", "ttl": 1, "data": ${JSON.stringify(res.data.View.stat)} }`;
-                        xhrHook.async('/x/web-interface/archive/stat?', undefined, async () => {
-                            return { response, responseText: response, responseType: 'json' };
-                        });
-                        Promise.resolve().then(() => {
-                            user.userStatus!.staff && res.data.View.staff && this.staff(res.data.View.staff);
-                        });
-                        // 不触发 ugcSection —— 列表播放由 initList 管理
-                        // 记录视频数据
-                        videoInfo.aidDatail(res.data.View);
-                    }
-                    if (res.data.Related) {
-                        const response = JSON.stringify(res.data.Related.map((d: any) => {
-                            return [d.pic, d.aid, d.title, d.stat.view, d.stat.danmaku, , d.stat.favorite]
-                        }));
-                        xhrHook.async('comment.bilibili.com/playtag', undefined, async () => {
-                            return { response, responseText: response, responseType: 'json' }
-                        }, false);
-                    }
-                }
+        jsonpHook.async("api.bilibili.com/x/web-interface/view/detail", undefined, async (r: string) => {
+            const obj = urlObj(r);
+            if (obj?.aid) {
+                this.aid = <number>obj.aid;
+            }
+            if (this.rawInitialState && (this.rawInitialState.aid == this.aid || this.rawInitialState.videoData?.aid == this.aid)) {
+                const detail = this.buildDetailFromState(this.rawInitialState);
+                this.handleDetailData(detail);
+                return detail;
+            }
+            try {
+                const data = await apiViewDetail(this.aid);
+                const detail = { code: 0, message: "0", ttl: 1, data };
+                this.handleDetailData(detail);
+                return detail;
+            } catch (e) {
+                return this.getVideoInfo();
             }
         }, false);
     }
