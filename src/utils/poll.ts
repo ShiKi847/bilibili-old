@@ -6,12 +6,21 @@
  * @param stop 轮询最大延时：/s，默认180s，即3分钟。为0时永不终止直到为真。
  */
 export function poll<T>(check: () => T, callback: (tar: Exclude<T, null | false | undefined>) => void, delay: number = 100, stop: number = 180) {
-    let timer = setInterval(() => {
-        const d = check();
-        if (d) {
-            clearInterval(timer);
-            callback(<Exclude<T, null | false | undefined>>d);
+    try {
+        const initial = check();
+        if (initial) {
+            callback(<Exclude<T, null | false | undefined>>initial);
+            return;
         }
+    } catch { }
+    let timer = setInterval(() => {
+        try {
+            const d = check();
+            if (d) {
+                clearInterval(timer);
+                callback(<Exclude<T, null | false | undefined>>d);
+            }
+        } catch { }
     }, delay);
     stop && setTimeout(() => clearInterval(timer), stop * 1000)
 }
