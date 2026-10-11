@@ -10495,7 +10495,7 @@ const MODULES = `
     ttl = 1;
   };
   async function apiViewDetail(aid) {
-    var _a3, _b2;
+    var _a3, _b2, _c, _d, _e;
     try {
       const response2 = await fetch(objUrl(URLS.VIEW_DETAIL, {
         aid
@@ -10520,21 +10520,43 @@ const MODULES = `
         card: {
           mid: viewData.owner.mid,
           name: viewData.owner.name,
-          face: viewData.owner.face
+          face: viewData.owner.face,
+          vip: { vipStatus: 0, vipType: 0 },
+          official_verify: { type: -1, desc: "" },
+          pendant: { image: "" },
+          nameplate: { image: "" },
+          level_info: { current_level: 0 },
+          fans: 0,
+          archiveCount: 0,
+          sign: ""
         },
         archive_count: 0
       };
     }
     try {
-      const [tagsRes, relatedRes] = await Promise.allSettled([
+      const mid = (_a3 = viewData == null ? void 0 : viewData.owner) == null ? void 0 : _a3.mid;
+      const [tagsRes, relatedRes, cardRes] = await Promise.allSettled([
         fetch(objUrl(URLS.TAG_ARCHIVE, { aid }), { credentials: "include" }).then((r) => r.json()),
-        fetch(objUrl(URLS.ARCHIVE_RELATED, { aid }), { credentials: "include" }).then((r) => r.json())
+        fetch(objUrl(URLS.ARCHIVE_RELATED, { aid }), { credentials: "include" }).then((r) => r.json()),
+        mid ? fetch(\`https://api.bilibili.com/x/web-interface/card?mid=\${mid}\`, { credentials: "include" }).then((r) => r.json()) : Promise.resolve(null)
       ]);
-      if (tagsRes.status === "fulfilled" && ((_a3 = tagsRes.value) == null ? void 0 : _a3.data)) {
+      if (tagsRes.status === "fulfilled" && ((_b2 = tagsRes.value) == null ? void 0 : _b2.data)) {
         detail.data.Tags = tagsRes.value.data;
       }
-      if (relatedRes.status === "fulfilled" && ((_b2 = relatedRes.value) == null ? void 0 : _b2.data)) {
+      if (relatedRes.status === "fulfilled" && ((_c = relatedRes.value) == null ? void 0 : _c.data)) {
         detail.data.Related = relatedRes.value.data;
+      }
+      if (cardRes.status === "fulfilled" && ((_e = (_d = cardRes.value) == null ? void 0 : _d.data) == null ? void 0 : _e.card)) {
+        const c = cardRes.value.data.card;
+        c.vip = c.vip || { vipStatus: 0, vipType: 0 };
+        c.official_verify = c.official_verify || { type: -1, desc: "" };
+        c.pendant = c.pendant || { image: "" };
+        c.nameplate = c.nameplate || { image: "" };
+        c.level_info = c.level_info || { current_level: 0 };
+        detail.data.Card = {
+          card: c,
+          archive_count: cardRes.value.data.archive_count || 0
+        };
       }
     } catch {
     }
@@ -11457,11 +11479,22 @@ const MODULES = `
   // src/utils/poll.ts
   init_tampermonkey();
   function poll(check, callback, delay = 100, stop = 180) {
+    try {
+      const initial = check();
+      if (initial) {
+        callback(initial);
+        return;
+      }
+    } catch {
+    }
     let timer = setInterval(() => {
-      const d = check();
-      if (d) {
-        clearInterval(timer);
-        callback(d);
+      try {
+        const d = check();
+        if (d) {
+          clearInterval(timer);
+          callback(d);
+        }
+      } catch {
       }
     }, delay);
     stop && setTimeout(() => clearInterval(timer), stop * 1e3);
@@ -27177,6 +27210,8 @@ const MODULES = `
         }
       });
       window.addEventListener("click", (e) => this.anchorClick(e));
+      window.addEventListener("auxclick", (e) => this.anchorClick(e));
+      window.addEventListener("mousedown", (e) => this.anchorClick(e));
       window.addEventListener("contextmenu", (e) => this.anchorClick(e));
       document.addEventListener("DOMContentLoaded", () => {
         this.location();
@@ -41512,6 +41547,7 @@ const MODULES = `
     _isStaffMode = false;
     like;
     webpackJsonp = true;
+    keepInitialState = true;
     get aid() {
       return BLOD.aid;
     }
@@ -41521,7 +41557,7 @@ const MODULES = `
     constructor() {
       var _a3;
       super(av_default);
-      this.rawInitialState = window.__INITIAL_STATE__;
+      this.rawInitialState = getInitialVideoState() || window.__INITIAL_STATE__;
       if (!this.aid) {
         location.href.replace(/av\\d+/i, (d) => this.aid = d.slice(2));
         if (!this.aid) {
@@ -41536,7 +41572,6 @@ const MODULES = `
       }
       new Comment2();
       this.like = new Like();
-      propertyHook(window, "__INITIAL_STATE__", void 0);
       propertyHook(window, "__playinfo__", void 0);
       location.href.includes("/s/video") && urlCleaner.updateLocation(location.href.replace("s/video", "video"));
       this.enLike();
@@ -41611,7 +41646,7 @@ const MODULES = `
      * 无\`__INITIAL_STATE__\`启动
      */
     embedPlayer() {
-      webpackHook(717, 286, (code) => code.replace('e("setVideoData",t)', \`e("setVideoData",t);\$("#bofqi").attr("id","__bofqi").html('<div class="bili-wrapper" id="bofqi"><div id="player_placeholder"></div></div>');new Function('EmbedPlayer',t.embedPlayer)(window.EmbedPlayer);\`));
+      webpackHook(717, 286, (code) => code.replace('e("setVideoData",t)', \`e("setVideoData",t);\$("#bofqi").attr("id","__bofqi").html('<div class="bili-wrapper" id="bofqi"><div id="player_placeholder"></div></div>');try{if(typeof t.embedPlayer==='string'){new Function('EmbedPlayer',t.embedPlayer)(window.EmbedPlayer)}else if(window.EmbedPlayer){window.EmbedPlayer('player','','aid='+(t.aid||'')+'&cid='+(t.cid||(t.pages&&t.pages[0]&&t.pages[0].cid)||''))}}catch(e){console.error(e)}\`));
     }
     /** 跳过充电鸣谢 */
     elecShow() {
@@ -41633,11 +41668,17 @@ const MODULES = `
     buildDetailFromState(state) {
       const view = { ...state.videoData };
       if (!view.pages || !view.pages.length) {
-        view.pages = [{ cid: view.cid, page: 1, from: "vupload", part: view.title, duration: view.duration }];
+        view.pages = [{ cid: view.cid || state.cid, page: 1, from: "vupload", part: view.title, duration: view.duration || 0 }];
       }
       if (view.stat) {
         view.stat = { ...view.stat };
       }
+      const upData = state.upData ? { ...state.upData } : view.owner ? { mid: view.owner.mid, name: view.owner.name, face: view.owner.face } : {};
+      upData.vip = upData.vip || { vipStatus: 0, vipType: 0 };
+      upData.official_verify = upData.official_verify || { type: -1, desc: "" };
+      upData.pendant = upData.pendant || { image: "" };
+      upData.nameplate = upData.nameplate || { image: "" };
+      upData.level_info = upData.level_info || { current_level: 0 };
       return {
         code: 0,
         message: "0",
@@ -41645,8 +41686,8 @@ const MODULES = `
         data: {
           View: view,
           Card: {
-            card: state.upData || (view.owner ? { mid: view.owner.mid, name: view.owner.name, face: view.owner.face } : {}),
-            archive_count: state.upData && state.upData.archiveCount || 0
+            card: upData,
+            archive_count: upData.archiveCount || state.upData && state.upData.archiveCount || 0
           },
           Tags: (state.tags || []).map((t) => typeof t === "string" ? { tag_name: t } : t),
           Related: state.related || [],
@@ -41658,7 +41699,8 @@ const MODULES = `
     handleDetailData(res) {
       if (res && res.data) {
         if (res.data.View) {
-          const response2 = \`{ "code": 0, "message": "0", "ttl": 1, "data": \${JSON.stringify(res.data.View.stat)} }\`;
+          const stat = res.data.View.stat || {};
+          const response2 = \`{ "code": 0, "message": "0", "ttl": 1, "data": \${JSON.stringify(stat)} }\`;
           xhrHook.async("/x/web-interface/archive/stat?", void 0, async () => {
             return { response: response2, responseText: response2, responseType: "json" };
           });
@@ -41683,12 +41725,25 @@ const MODULES = `
     /** 检查页面是否失效及bangumi跳转，拦截 view/detail jsonp 请求 */
     aidLostCheck() {
       jsonpHook.async("api.bilibili.com/x/web-interface/view/detail", void 0, async (r) => {
-        var _a3;
+        var _a3, _b2, _c;
         const obj = urlObj(r);
         if (obj == null ? void 0 : obj.aid) {
           this.aid = obj.aid;
         }
-        if (this.rawInitialState && (this.rawInitialState.aid == this.aid || ((_a3 = this.rawInitialState.videoData) == null ? void 0 : _a3.aid) == this.aid)) {
+        if (!this.rawInitialState) {
+          this.rawInitialState = getInitialVideoState();
+        }
+        if (!this.rawInitialState || this.rawInitialState.aid != this.aid && ((_a3 = this.rawInitialState.videoData) == null ? void 0 : _a3.aid) != this.aid) {
+          for (let i2 = 0; i2 < 6; i2++) {
+            const st = getInitialVideoState();
+            if (st && (st.aid == this.aid || ((_b2 = st.videoData) == null ? void 0 : _b2.aid) == this.aid)) {
+              this.rawInitialState = st;
+              break;
+            }
+            await new Promise((r2) => setTimeout(r2, 50));
+          }
+        }
+        if (this.rawInitialState && (this.rawInitialState.aid == this.aid || ((_c = this.rawInitialState.videoData) == null ? void 0 : _c.aid) == this.aid)) {
           const detail = this.buildDetailFromState(this.rawInitialState);
           this.handleDetailData(detail);
           return detail;
@@ -42108,6 +42163,7 @@ const MODULES = `
     destroy = false;
     like;
     webpackJsonp = true;
+    keepInitialState = true;
     /** 原始URL查询参数 */
     route;
     /** 是否来自列表页面 */
@@ -42138,7 +42194,7 @@ const MODULES = `
     }
     constructor() {
       super(list_default);
-      this.rawInitialState = window.__INITIAL_STATE__;
+      this.rawInitialState = getInitialVideoState() || window.__INITIAL_STATE__;
       this.route = urlObj(location.href);
       this.isFromList = /\\/list\\//.test(location.pathname);
       if (/\\/video\\/av\\d+(\\?.*)?\$/.test(location.pathname)) {
@@ -42166,7 +42222,6 @@ const MODULES = `
       }
       this.like = new Like();
       new Comment2();
-      propertyHook(window, "__INITIAL_STATE__", void 0);
       propertyHook(window, "__playinfo__", void 0);
       this.enLike();
       this.aidLostCheck();
@@ -42602,7 +42657,7 @@ const MODULES = `
     }
     /** 添加播放器启动代码 */
     embedPlayer() {
-      webpackHook(717, 286, (code) => code.replace('e("setVideoData",t)', \`e("setVideoData",t);\$("#bofqi").attr("id","__bofqi").html('<div class="bili-wrapper" id="bofqi"><div id="player_placeholder"></div></div>');new Function('EmbedPlayer',t.embedPlayer)(window.EmbedPlayer);\`));
+      webpackHook(717, 286, (code) => code.replace('e("setVideoData",t)', \`e("setVideoData",t);\$("#bofqi").attr("id","__bofqi").html('<div class="bili-wrapper" id="bofqi"><div id="player_placeholder"></div></div>');try{if(typeof t.embedPlayer==='string'){new Function('EmbedPlayer',t.embedPlayer)(window.EmbedPlayer)}else if(window.EmbedPlayer){window.EmbedPlayer('player','','aid='+(t.aid||'')+'&cid='+(t.cid||(t.pages&&t.pages[0]&&t.pages[0].cid)||''))}}catch(e){console.error(e)}\`));
     }
     /** 跳过充电鸣谢 */
     elecShow() {
@@ -42624,11 +42679,17 @@ const MODULES = `
     buildDetailFromState(state) {
       const view = { ...state.videoData };
       if (!view.pages || !view.pages.length) {
-        view.pages = [{ cid: view.cid, page: 1, from: "vupload", part: view.title, duration: view.duration }];
+        view.pages = [{ cid: view.cid || state.cid, page: 1, from: "vupload", part: view.title, duration: view.duration || 0 }];
       }
       if (view.stat) {
         view.stat = { ...view.stat };
       }
+      const upData = state.upData ? { ...state.upData } : view.owner ? { mid: view.owner.mid, name: view.owner.name, face: view.owner.face } : {};
+      upData.vip = upData.vip || { vipStatus: 0, vipType: 0 };
+      upData.official_verify = upData.official_verify || { type: -1, desc: "" };
+      upData.pendant = upData.pendant || { image: "" };
+      upData.nameplate = upData.nameplate || { image: "" };
+      upData.level_info = upData.level_info || { current_level: 0 };
       return {
         code: 0,
         message: "0",
@@ -42636,8 +42697,8 @@ const MODULES = `
         data: {
           View: view,
           Card: {
-            card: state.upData || (view.owner ? { mid: view.owner.mid, name: view.owner.name, face: view.owner.face } : {}),
-            archive_count: state.upData && state.upData.archiveCount || 0
+            card: upData,
+            archive_count: upData.archiveCount || state.upData && state.upData.archiveCount || 0
           },
           Tags: (state.tags || []).map((t) => typeof t === "string" ? { tag_name: t } : t),
           Related: state.related || [],
@@ -42649,7 +42710,8 @@ const MODULES = `
     handleDetailData(res) {
       if (res && res.data) {
         if (res.data.View) {
-          const response2 = \`{ "code": 0, "message": "0", "ttl": 1, "data": \${JSON.stringify(res.data.View.stat)} }\`;
+          const stat = res.data.View.stat || {};
+          const response2 = \`{ "code": 0, "message": "0", "ttl": 1, "data": \${JSON.stringify(stat)} }\`;
           xhrHook.async("/x/web-interface/archive/stat?", void 0, async () => {
             return { response: response2, responseText: response2, responseType: "json" };
           });
@@ -42674,12 +42736,25 @@ const MODULES = `
      */
     aidLostCheck() {
       jsonpHook.async("api.bilibili.com/x/web-interface/view/detail", void 0, async (r) => {
-        var _a3;
+        var _a3, _b2, _c;
         const obj = urlObj(r);
         if (obj == null ? void 0 : obj.aid) {
           this.aid = obj.aid;
         }
-        if (this.rawInitialState && (this.rawInitialState.aid == this.aid || ((_a3 = this.rawInitialState.videoData) == null ? void 0 : _a3.aid) == this.aid)) {
+        if (!this.rawInitialState) {
+          this.rawInitialState = getInitialVideoState();
+        }
+        if (!this.rawInitialState || this.rawInitialState.aid != this.aid && ((_a3 = this.rawInitialState.videoData) == null ? void 0 : _a3.aid) != this.aid) {
+          for (let i2 = 0; i2 < 6; i2++) {
+            const st = getInitialVideoState();
+            if (st && (st.aid == this.aid || ((_b2 = st.videoData) == null ? void 0 : _b2.aid) == this.aid)) {
+              this.rawInitialState = st;
+              break;
+            }
+            await new Promise((r2) => setTimeout(r2, 50));
+          }
+        }
+        if (this.rawInitialState && (this.rawInitialState.aid == this.aid || ((_c = this.rawInitialState.videoData) == null ? void 0 : _c.aid) == this.aid)) {
           const detail = this.buildDetailFromState(this.rawInitialState);
           this.handleDetailData(detail);
           return detail;
@@ -45495,6 +45570,36 @@ const MODULES = `
 
   // src/index.ts
   document.domain = "bilibili.com";
+  var initialVideoState = window.__INITIAL_STATE__;
+  try {
+    Object.defineProperty(window, "__INITIAL_STATE__", {
+      configurable: true,
+      get: () => void 0,
+      set: (v) => {
+        if (v && typeof v === "object" && (v.videoData || v.aid)) {
+          initialVideoState = v;
+        }
+      }
+    });
+  } catch (e) {
+  }
+  var initialPlayInfo = window.__playinfo__;
+  try {
+    Object.defineProperty(window, "__playinfo__", {
+      configurable: true,
+      get: () => void 0,
+      set: (v) => {
+        if (v) initialPlayInfo = v;
+      }
+    });
+  } catch (e) {
+  }
+  function getInitialVideoState() {
+    return initialVideoState;
+  }
+  function getInitialPlayInfo() {
+    return initialPlayInfo;
+  }
   var _a2;
   BLOD.version = (_a2 = GM.info) == null ? void 0 : _a2.script.version.slice(-40);
   user.addCallback((status) => {

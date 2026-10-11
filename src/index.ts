@@ -39,6 +39,41 @@ import { PageOnline } from './page/online';
 
 document.domain = 'bilibili.com';
 
+// 提前拦截并捕获首屏状态 __INITIAL_STATE__ 与 __playinfo__
+// 1. 无论是首屏同步还是异步注入，都能完整捕获到原始数据，避免多标签并发时因时序丢失首屏状态
+// 2. 对旧版模板（如 video.js）读取时始终返回 undefined，避免旧版脚本读取到新版结构或进入错误的 SSR 水合流程
+let initialVideoState: any = (window as any).__INITIAL_STATE__;
+try {
+    Object.defineProperty(window, '__INITIAL_STATE__', {
+        configurable: true,
+        get: () => undefined,
+        set: (v: any) => {
+            if (v && typeof v === 'object' && (v.videoData || v.aid)) {
+                initialVideoState = v;
+            }
+        }
+    });
+} catch (e) { }
+
+let initialPlayInfo: any = (window as any).__playinfo__;
+try {
+    Object.defineProperty(window, '__playinfo__', {
+        configurable: true,
+        get: () => undefined,
+        set: (v: any) => {
+            if (v) initialPlayInfo = v;
+        }
+    });
+} catch (e) { }
+
+export function getInitialVideoState() {
+    return initialVideoState;
+}
+
+export function getInitialPlayInfo() {
+    return initialPlayInfo;
+}
+
 // 提取版本哈希（仅限用户脚本）
 BLOD.version = GM.info?.script.version.slice(-40);
 // 获取用户数据后初始化

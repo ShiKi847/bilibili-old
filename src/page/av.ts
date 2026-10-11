@@ -24,6 +24,7 @@ import { xhrHook } from "../utils/hook/xhr";
 import { poll } from "../utils/poll";
 import { Scrollbar } from "../utils/scrollbar";
 import { PageBangumi } from "./bangumi";
+import { getInitialVideoState } from "../index";
 import { Header } from "./header";
 import { Page } from "./page";
 
@@ -42,6 +43,8 @@ export class PageAV extends Page {
 
     protected webpackJsonp = true;
 
+    protected keepInitialState = true;
+
     protected get aid() {
         return BLOD.aid;
     }
@@ -52,7 +55,7 @@ export class PageAV extends Page {
 
     constructor() {
         super(html);
-        this.rawInitialState = (window as any).__INITIAL_STATE__;
+        this.rawInitialState = getInitialVideoState() || (window as any).__INITIAL_STATE__;
         if (!this.aid) {
             location.href.replace(/av\d+/i, d => this.aid = <any>d.slice(2));
             if (!this.aid) {
@@ -67,7 +70,6 @@ export class PageAV extends Page {
         }
         new Comment();
         this.like = new Like();
-        propertyHook(window, '__INITIAL_STATE__', undefined);
         propertyHook(window, '__playinfo__', undefined);
         location.href.includes("/s/video") && urlCleaner.updateLocation(location.href.replace("s/video", "video"));
         this.enLike();
@@ -149,7 +151,7 @@ export class PageAV extends Page {
      * 无`__INITIAL_STATE__`启动
      */
     protected embedPlayer() {
-        webpackHook(717, 286, code => code.replace('e("setVideoData",t)', `e("setVideoData",t);$("#bofqi").attr("id","__bofqi").html('<div class="bili-wrapper" id="bofqi"><div id="player_placeholder"></div></div>');new Function('EmbedPlayer',t.embedPlayer)(window.EmbedPlayer);`));
+        webpackHook(717, 286, code => code.replace('e("setVideoData",t)', `e("setVideoData",t);$("#bofqi").attr("id","__bofqi").html('<div class="bili-wrapper" id="bofqi"><div id="player_placeholder"></div></div>');try{if(typeof t.embedPlayer==='string'){new Function('EmbedPlayer',t.embedPlayer)(window.EmbedPlayer)}else if(window.EmbedPlayer){window.EmbedPlayer('player','','aid='+(t.aid||'')+'&cid='+(t.cid||(t.pages&&t.pages[0]&&t.pages[0].cid)||''))}}catch(e){console.error(e)}`));
     }
 
     /** 跳过充电鸣谢 */
@@ -170,11 +172,17 @@ export class PageAV extends Page {
     protected buildDetailFromState(state: any) {
         const view = { ...state.videoData };
         if (!view.pages || !view.pages.length) {
-            view.pages = [{ cid: view.cid, page: 1, from: 'vupload', part: view.title, duration: view.duration }];
+            view.pages = [{ cid: view.cid || state.cid, page: 1, from: 'vupload', part: view.title, duration: view.duration || 0 }];
         }
         if (view.stat) {
             view.stat = { ...view.stat };
         }
+        const upData = state.upData ? { ...state.upData } : (view.owner ? { mid: view.owner.mid, name: view.owner.name, face: view.owner.face } : {});
+        upData.vip = upData.vip || { vipStatus: 0, vipType: 0 };
+        upData.official_verify = upData.official_verify || { type: -1, desc: '' };
+        upData.pendant = upData.pendant || { image: '' };
+        upData.nameplate = upData.nameplate || { image: '' };
+        upData.level_info = upData.level_info || { current_level: 0 };
         return {
             code: 0,
             message: "0",
@@ -182,8 +190,8 @@ export class PageAV extends Page {
             data: {
                 View: view,
                 Card: {
-                    card: state.upData || (view.owner ? { mid: view.owner.mid, name: view.owner.name, face: view.owner.face } : {}),
-                    archive_count: (state.upData && state.upData.archiveCount) || 0
+                    card: upData,
+                    archive_count: upData.archiveCount || (state.upData && state.upData.archiveCount) || 0
                 },
                 Tags: (state.tags || []).map((t: any) => typeof t === 'string' ? { tag_name: t } : t),
                 Related: state.related || [],
@@ -196,7 +204,8 @@ export class PageAV extends Page {
     protected handleDetailData(res: any) {
         if (res && res.data) {
             if (res.data.View) {
-                const response = `{ "code": 0, "message": "0", "ttl": 1, "data": ${JSON.stringify(res.data.View.stat)} }`;
+                const stat = res.data.View.stat || {};
+                const response = `{ "code": 0, "message": "0", "ttl": 1, "data": ${JSON.stringify(stat)} }`;
                 xhrHook.async('/x/web-interface/archive/stat?', undefined, async () => {
                     // 原接口被429，使用本处数据替代
                     return { response, responseText: response, responseType: 'json' };
@@ -228,6 +237,19 @@ export class PageAV extends Page {
             const obj = urlObj(r);
             if (obj?.aid) {
                 this.aid = <number>obj.aid;
+            }
+            if (!this.rawInitialState) {
+                this.rawInitialState = getInitialVideoState();
+            }
+            if (!this.rawInitialState || (this.rawInitialState.aid != this.aid && this.rawInitialState.videoData?.aid != this.aid)) {
+                for (let i = 0; i < 6; i++) {
+                    const st = getInitialVideoState();
+                    if (st && (st.aid == this.aid || st.videoData?.aid == this.aid)) {
+                        this.rawInitialState = st;
+                        break;
+                    }
+                    await new Promise(r => setTimeout(r, 50));
+                }
             }
             // 优先从首屏状态构造，无网络延迟且避免被风控拦截
             if (this.rawInitialState && (this.rawInitialState.aid == this.aid || this.rawInitialState.videoData?.aid == this.aid)) {
