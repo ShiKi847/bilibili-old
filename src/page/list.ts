@@ -711,6 +711,9 @@ export class PageList extends Page {
         upData.pendant = upData.pendant || { image: '' };
         upData.nameplate = upData.nameplate || { image: '' };
         upData.level_info = upData.level_info || { current_level: 0 };
+        upData.fans = upData.fans || 0;
+        upData.archiveCount = upData.archiveCount || 0;
+        upData.sign = upData.sign || '';
         return {
             code: 0,
             message: "0",

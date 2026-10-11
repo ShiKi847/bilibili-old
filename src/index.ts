@@ -48,8 +48,10 @@ try {
         configurable: true,
         get: () => undefined,
         set: (v: any) => {
-            if (v && typeof v === 'object' && (v.videoData || v.aid)) {
-                initialVideoState = v;
+            if (v && typeof v === 'object') {
+                if (v.videoData || v.aid || v.bvid || !initialVideoState) {
+                    initialVideoState = v;
+                }
             }
         }
     });
