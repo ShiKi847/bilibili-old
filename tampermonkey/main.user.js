@@ -10496,23 +10496,32 @@ const MODULES = `
   };
   async function apiViewDetail(aid) {
     var _a3, _b2, _c, _d, _e;
+    let viewData;
     try {
-      const response2 = await fetch(objUrl(URLS.VIEW_DETAIL, {
-        aid
-      }), {
-        credentials: "include"
-      });
-      if (response2.ok) {
-        const json = await response2.json();
-        if (json && json.code === 0 && json.data) {
-          return jsonCheck(json).data;
+      const viewRes = await fetch(objUrl(URLS.X_VIEW, { aid }), { credentials: "include" });
+      if (viewRes.ok) {
+        const viewJson = await viewRes.json();
+        if (viewJson && viewJson.code === 0 && viewJson.data) {
+          viewData = viewJson.data;
         }
       }
     } catch {
     }
-    const viewRes = await fetch(objUrl(URLS.X_VIEW, { aid }), { credentials: "include" });
-    const viewJson = await viewRes.json();
-    const viewData = jsonCheck(viewJson).data;
+    if (!viewData) {
+      try {
+        const viewRes = await fetch(objUrl(URLS.X_VIEW, { aid }));
+        if (viewRes.ok) {
+          const viewJson = await viewRes.json();
+          if (viewJson && viewJson.code === 0 && viewJson.data) {
+            viewData = viewJson.data;
+          }
+        }
+      } catch {
+      }
+    }
+    if (!viewData) {
+      throw new Error(\`Failed to fetch view data for av\${aid}\`);
+    }
     const detail = new ApiViewDetail();
     detail.data.View = viewData;
     if (viewData == null ? void 0 : viewData.owner) {
@@ -41728,25 +41737,34 @@ const MODULES = `
     /** 检查页面是否失效及bangumi跳转，拦截 view/detail jsonp 请求 */
     aidLostCheck() {
       jsonpHook.async("api.bilibili.com/x/web-interface/view/detail", void 0, async (r) => {
-        var _a3, _b2, _c;
         const obj = urlObj(r);
         if (obj == null ? void 0 : obj.aid) {
           this.aid = obj.aid;
         }
+        const matchAid = (st) => {
+          var _a3, _b2;
+          if (!st) return false;
+          if (st.aid == this.aid || ((_a3 = st.videoData) == null ? void 0 : _a3.aid) == this.aid) return true;
+          if (this.aid && (String(st.aid) === String(this.aid) || String((_b2 = st.videoData) == null ? void 0 : _b2.aid) === String(this.aid))) return true;
+          return false;
+        };
         if (!this.rawInitialState) {
           this.rawInitialState = getInitialVideoState();
         }
-        if (!this.rawInitialState || this.rawInitialState.aid != this.aid && ((_a3 = this.rawInitialState.videoData) == null ? void 0 : _a3.aid) != this.aid) {
-          for (let i2 = 0; i2 < 6; i2++) {
+        if (!this.rawInitialState || !matchAid(this.rawInitialState)) {
+          for (let i2 = 0; i2 < 25; i2++) {
             const st = getInitialVideoState();
-            if (st && (st.aid == this.aid || ((_b2 = st.videoData) == null ? void 0 : _b2.aid) == this.aid)) {
+            if (matchAid(st)) {
               this.rawInitialState = st;
+              break;
+            }
+            if (document.readyState === "complete" && i2 >= 6) {
               break;
             }
             await new Promise((r2) => setTimeout(r2, 50));
           }
         }
-        if (this.rawInitialState && (this.rawInitialState.aid == this.aid || ((_c = this.rawInitialState.videoData) == null ? void 0 : _c.aid) == this.aid)) {
+        if (this.rawInitialState && matchAid(this.rawInitialState)) {
           const detail = this.buildDetailFromState(this.rawInitialState);
           this.handleDetailData(detail);
           return detail;
@@ -42742,25 +42760,34 @@ const MODULES = `
      */
     aidLostCheck() {
       jsonpHook.async("api.bilibili.com/x/web-interface/view/detail", void 0, async (r) => {
-        var _a3, _b2, _c;
         const obj = urlObj(r);
         if (obj == null ? void 0 : obj.aid) {
           this.aid = obj.aid;
         }
+        const matchAid = (st) => {
+          var _a3, _b2;
+          if (!st) return false;
+          if (st.aid == this.aid || ((_a3 = st.videoData) == null ? void 0 : _a3.aid) == this.aid) return true;
+          if (this.aid && (String(st.aid) === String(this.aid) || String((_b2 = st.videoData) == null ? void 0 : _b2.aid) === String(this.aid))) return true;
+          return false;
+        };
         if (!this.rawInitialState) {
           this.rawInitialState = getInitialVideoState();
         }
-        if (!this.rawInitialState || this.rawInitialState.aid != this.aid && ((_a3 = this.rawInitialState.videoData) == null ? void 0 : _a3.aid) != this.aid) {
-          for (let i2 = 0; i2 < 6; i2++) {
+        if (!this.rawInitialState || !matchAid(this.rawInitialState)) {
+          for (let i2 = 0; i2 < 25; i2++) {
             const st = getInitialVideoState();
-            if (st && (st.aid == this.aid || ((_b2 = st.videoData) == null ? void 0 : _b2.aid) == this.aid)) {
+            if (matchAid(st)) {
               this.rawInitialState = st;
+              break;
+            }
+            if (document.readyState === "complete" && i2 >= 6) {
               break;
             }
             await new Promise((r2) => setTimeout(r2, 50));
           }
         }
-        if (this.rawInitialState && (this.rawInitialState.aid == this.aid || ((_c = this.rawInitialState.videoData) == null ? void 0 : _c.aid) == this.aid)) {
+        if (this.rawInitialState && matchAid(this.rawInitialState)) {
           const detail = this.buildDetailFromState(this.rawInitialState);
           this.handleDetailData(detail);
           return detail;

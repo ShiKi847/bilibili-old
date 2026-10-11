@@ -241,21 +241,30 @@ export class PageAV extends Page {
             if (obj?.aid) {
                 this.aid = <number>obj.aid;
             }
+            const matchAid = (st: any) => {
+                if (!st) return false;
+                if (st.aid == this.aid || st.videoData?.aid == this.aid) return true;
+                if (this.aid && (String(st.aid) === String(this.aid) || String(st.videoData?.aid) === String(this.aid))) return true;
+                return false;
+            };
             if (!this.rawInitialState) {
                 this.rawInitialState = getInitialVideoState();
             }
-            if (!this.rawInitialState || (this.rawInitialState.aid != this.aid && this.rawInitialState.videoData?.aid != this.aid)) {
-                for (let i = 0; i < 6; i++) {
+            if (!this.rawInitialState || !matchAid(this.rawInitialState)) {
+                for (let i = 0; i < 25; i++) {
                     const st = getInitialVideoState();
-                    if (st && (st.aid == this.aid || st.videoData?.aid == this.aid)) {
+                    if (matchAid(st)) {
                         this.rawInitialState = st;
+                        break;
+                    }
+                    if (document.readyState === 'complete' && i >= 6) {
                         break;
                     }
                     await new Promise(r => setTimeout(r, 50));
                 }
             }
             // 优先从首屏状态构造，无网络延迟且避免被风控拦截
-            if (this.rawInitialState && (this.rawInitialState.aid == this.aid || this.rawInitialState.videoData?.aid == this.aid)) {
+            if (this.rawInitialState && matchAid(this.rawInitialState)) {
                 const detail = this.buildDetailFromState(this.rawInitialState);
                 this.handleDetailData(detail);
                 return detail;

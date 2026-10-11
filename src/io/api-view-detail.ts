@@ -20,23 +20,33 @@ export class ApiViewDetail {
     ttl = 1;
 }
 export async function apiViewDetail(aid: number) {
+    let viewData: any;
     try {
-        const response = await fetch(objUrl(URLS.VIEW_DETAIL, {
-            aid
-        }), {
-            credentials: 'include'
-        });
-        if (response.ok) {
-            const json = await response.json();
-            if (json && json.code === 0 && json.data) {
-                return <IApiViewDetailResponse>jsonCheck(json).data;
+        const viewRes = await fetch(objUrl(URLS.X_VIEW, { aid }), { credentials: 'include' });
+        if (viewRes.ok) {
+            const viewJson = await viewRes.json();
+            if (viewJson && viewJson.code === 0 && viewJson.data) {
+                viewData = viewJson.data;
             }
         }
     } catch { }
 
-    const viewRes = await fetch(objUrl(URLS.X_VIEW, { aid }), { credentials: 'include' });
-    const viewJson = await viewRes.json();
-    const viewData = jsonCheck(viewJson).data;
+    if (!viewData) {
+        try {
+            const viewRes = await fetch(objUrl(URLS.X_VIEW, { aid }));
+            if (viewRes.ok) {
+                const viewJson = await viewRes.json();
+                if (viewJson && viewJson.code === 0 && viewJson.data) {
+                    viewData = viewJson.data;
+                }
+            }
+        } catch { }
+    }
+
+    if (!viewData) {
+        throw new Error(`Failed to fetch view data for av${aid}`);
+    }
+
     const detail = new ApiViewDetail();
     detail.data.View = viewData;
     if (viewData?.owner) {
