@@ -1,20 +1,36 @@
 const arr: Record<number, ((code: string) => typeof code)[]>[] = [];
 const param: [string, string, string][] = [];
+const blockedPatterns: RegExp[] = [];
 let length: number;
 class Webpack {
     static load = false;
+    static instance: Webpack | null = null;
     protected backup = (<any>window).webpackJsonp;
+    protected blockedBackup: any;
     protected wrapper: Function | null = null;
     constructor() {
         Webpack.load = true;
+        Webpack.instance = this;
         Reflect.defineProperty(window, "webpackJsonp", {
             configurable: true,
             set: v => {
+                // 过滤掉外部被拦截的新版脚本（如新版 video.js）注册的 webpackJsonp runtime
+                const currentScript = document.currentScript;
+                const src = currentScript instanceof HTMLScriptElement ? currentScript.src : '';
+                if (src && blockedPatterns.some(p => p.test(src))) {
+                    this.blockedBackup = v;
+                    return true;
+                }
                 // 过滤掉 get 返回的包装函数本身，防止外部脚本把包装函数赋值回来导致无限递归
                 typeof v === 'function' && v !== this.wrapper && (this.backup = v);
                 return true
             },
             get: () => {
+                const currentScript = document.currentScript;
+                const src = currentScript instanceof HTMLScriptElement ? currentScript.src : '';
+                if (src && blockedPatterns.some(p => p.test(src))) {
+                    return () => { };
+                }
                 if (!this.backup) return this.backup;
                 this.wrapper = (chunkIds: any[], moreModules: any[], executeModules: any[]) => {
                     const len = moreModules.length ?? length;
@@ -55,4 +71,17 @@ export function webpackHook(len: number, pos: number, rpc: (code: string) => typ
     }
     arr[len][pos] = arr[len][pos] || [];
     arr[len][pos].push((code: string) => rpc(code));
+}
+
+export function webpackBlock(patterns: readonly RegExp[]) {
+    Webpack.load || new Webpack();
+    patterns.forEach(p => {
+        if (!blockedPatterns.includes(p)) {
+            blockedPatterns.push(p);
+        }
+    });
+}
+
+export function webpackUnblock() {
+    blockedPatterns.length = 0;
 }

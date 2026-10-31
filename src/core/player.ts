@@ -166,12 +166,20 @@ class Player {
         if ((<any>window).player?.disconnect) {
             try {
                 debug('爆破新版播放器!');
+                const oldPlayer = (<any>window).player;
+                const oldContainer = document.getElementById('bilibili-player');
+                try {
+                    if ((<any>window).player === oldPlayer) {
+                        Reflect.deleteProperty(window, 'player');
+                    }
+                } catch { }
                 // await 等待 disconnect 的 Promise 完成，避免新版播放器还未销毁就开始挂载旧版
-                await (<any>window).player.disconnect();
-                this.nanoPlayer || (this.nanoPlayer = (<any>window).player);
-                // disconnect 完成后清空容器，防止新版残留 DOM 干扰旧版播放器挂载
-                const container = document.getElementById('bilibili-player')
-                    || document.getElementById('bofqi');
+                await oldPlayer.disconnect();
+                this.nanoPlayer || (this.nanoPlayer = oldPlayer);
+                // disconnect 完成后仅清空仍在文档中的新版容器，避免异步误删 updateDom 替换进来的旧版 #bofqi
+                const container = (oldContainer && document.contains(oldContainer))
+                    ? oldContainer
+                    : document.getElementById('bilibili-player');
                 if (container) {
                     debug('清空播放器容器，准备挂载旧版播放器');
                     container.innerHTML = '';

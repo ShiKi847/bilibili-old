@@ -4,17 +4,27 @@ import { objUrl, urlObj } from "../format/url";
 const appendChild = Element.prototype.appendChild;
 const insertBefore = Element.prototype.insertBefore;
 const jsonp: [string[], Function][] = [];
+function checkJsonp(node: any) {
+    if (node && (node.nodeName === 'SCRIPT' || node.nodeName === 'script') && node.src) {
+        jsonp.forEach(d => {
+            d && d[0].every(k => node.src.includes(k)) && d[1].call(node);
+        });
+    }
+}
 Element.prototype.appendChild = function <T extends Node>(newChild: T): T {
-    this.parentElement === document.documentElement && newChild.nodeName == 'SCRIPT' && (<any>newChild).src && (jsonp.forEach(d => {
-        d[0].every(d => (<any>newChild).src.includes(d)) && d[1].call(newChild);
-    }));
+    checkJsonp(newChild);
     return <T>appendChild.call(this, newChild);
 };
 Element.prototype.insertBefore = function <T extends Node>(newChild: T, refChild: Node | null): T {
-    this.parentElement === document.documentElement && newChild.nodeName == 'SCRIPT' && (<any>newChild).src && (jsonp.forEach(d => {
-        d[0].every(d => (<any>newChild).src.includes(d)) && d[1].call(newChild);
-    }));
+    checkJsonp(newChild);
     return <T>insertBefore.call(this, newChild, refChild);
+};
+const append = Element.prototype.append;
+if (append) {
+    Element.prototype.append = function (...nodes: (Node | string)[]) {
+        nodes.forEach(n => checkJsonp(n));
+        return append.apply(this, nodes);
+    };
 }
 /**
  * 注册拦截修改jsonp请求，本方法必须传入同步返回的回调函数，要使用异步回调请考虑方法`async`。
@@ -45,8 +55,8 @@ export function jsonpHook(url: string | string[], redirect?: (url: string) => st
             }
         }
     };
-    const iid = jsonp.push([one, two]);
-    return () => { removeJsonphook(iid) };
+    id = jsonp.push([one, two]);
+    return () => { removeJsonphook(id) };
 }
 /**
  * `jsonphook`的异步版本，可以用异步方法获取到的返回值替换jsonp请求的返回值。
@@ -63,26 +73,29 @@ jsonpHook.async = (url: string | string[], condition?: (url: string) => boolean,
         try {
             once && id && delete jsonp[id - 1];
             if (!condition || condition(this.src)) {
-                const obj = urlObj(this.src);
+                const src = this.src;
+                const obj = urlObj(src);
                 if (obj) {
                     const callback: any = obj.callback;
-                    const call = (<any>window)[callback];
-                    if (call) {
-                        modifyResponse && modifyResponse(this.src).then(d => {
-                            (<any>window)[callback](d);
+                    this.removeAttribute("src");
+                    if (callback) {
+                        modifyResponse && modifyResponse(src).then(d => {
+                            const call = (<any>window)[callback];
+                            if (typeof call === 'function') {
+                                call(d);
+                            }
                             this.dispatchEvent(new ProgressEvent("load"));
                         }).catch(e => {
                             this.dispatchEvent(new ProgressEvent("error"));
                             debug.error("modifyResponse of xhrhookasync", one, e);
-                        })
+                        });
                     }
-                    this.removeAttribute("src");
                 }
             }
         } catch (e) { debug.error("jsonphook", one, e) }
     }
-    const iid = jsonp.push([one, two]);
-    return () => { removeJsonphook(iid) };
+    id = jsonp.push([one, two]);
+    return () => { removeJsonphook(id) };
 }
 /**
  * 禁止脚本注入运行。
@@ -111,6 +124,7 @@ jsonpHook.scriptBlock = (url: string | string[]) => {
  * @returns 取消拦截的方法
  */
 jsonpHook.scriptIntercept = (url: string | string[], redirect?: (url: string) => string, text?: (url: string) => string) => {
+    let id: number;
     const one = Array.isArray(url) ? url : [url];
     const two = function (this: HTMLScriptElement) {
         try {
@@ -126,11 +140,11 @@ jsonpHook.scriptIntercept = (url: string | string[], redirect?: (url: string) =>
             }
         } catch (e) { debug.error("scriptIntercept", one, e) }
     }
-    const iid = jsonp.push([one, two]);
-    return () => { removeJsonphook(iid) };
+    id = jsonp.push([one, two]);
+    return () => { removeJsonphook(id) };
 }
 /**
- * 取消jsonphook或脚本拦截，只在注册时设置了`once=false`时才需要使用本方法！
+ * 取消jsonphook或脚本拦截，只在注册时设置了`once=false`才需要使用本方法！
  * @param id 要取消注册的id，该值为注册时返回值，一个id只允许使用一次！
  */
 function removeJsonphook(id: number) {
@@ -144,6 +158,7 @@ function removeJsonphook(id: number) {
  * @returns 取消拦截的方法
  */
 jsonpHook.xhr = (url: string | string[]) => {
+    let id: number;
     const one = Array.isArray(url) ? url : [url];
     const two = function (this: HTMLScriptElement) {
         try {
@@ -168,6 +183,6 @@ jsonpHook.xhr = (url: string | string[]) => {
             }
         } catch (e) { debug.error("jsonphook", one, e) }
     }
-    const iid = jsonp.push([one, two]);
-    return () => { removeJsonphook(iid) };
+    id = jsonp.push([one, two]);
+    return () => { removeJsonphook(id) };
 }

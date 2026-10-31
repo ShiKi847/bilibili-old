@@ -47,6 +47,10 @@ class UrlCleaner {
         });
         // 处理点击事件
         window.addEventListener("click", e => this.anchorClick(e));
+        // 处理鼠标中键点击事件（多标签页打开）
+        window.addEventListener("auxclick", e => this.anchorClick(e));
+        // 处理鼠标按下事件（提前净化链接）
+        window.addEventListener("mousedown", e => this.anchorClick(e));
         // 处理右键菜单
         window.addEventListener("contextmenu", e => this.anchorClick(e));
         // 页面载入完成处理

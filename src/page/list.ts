@@ -26,8 +26,15 @@ import { xhrHook } from "../utils/hook/xhr";
 import { poll } from "../utils/poll";
 import { Scrollbar } from "../utils/scrollbar";
 import { PageBangumi } from "./bangumi";
+import { getInitialVideoState, lockInitialState } from "../index";
 import { Header } from "./header";
 import { Page } from "./page";
+
+const modernListScriptPatterns = [
+    /\/bfs\/static\/jinkela\/video\//,
+    /\/bfs\/static\/player\/main\//,
+    /\/bfs\/seed\/jinkela\/short\/b-mirror\//,
+];
 
 /**
  * /list/ 页面处理器
@@ -43,12 +50,22 @@ import { Page } from "./page";
  */
 export class PageList extends Page {
 
+    /** 原始首屏状态备份 */
+    protected rawInitialState: any;
+
+    /** 预请求的详情数据 Promise */
+    protected detailPromise?: Promise<any>;
+
     /** 销毁标记 */
     protected destroy = false;
 
     protected like: Like;
 
     protected webpackJsonp = true;
+
+    protected keepInitialState = true;
+
+    protected neutralizeScriptPatterns = modernListScriptPatterns;
 
     /** 原始URL查询参数 */
     protected route: Record<string, string | number>;
@@ -93,6 +110,10 @@ export class PageList extends Page {
 
     constructor() {
         super(html);
+        this.rawInitialState = getInitialVideoState() || (window as any).__INITIAL_STATE__;
+        lockInitialState();
+        propertyHook(window, '__INITIAL_STATE__', undefined);
+        this.neutralizeOriginalScripts();
 
         this.route = urlObj(location.href);
         this.isFromList = /\/list\//.test(location.pathname); 
@@ -121,11 +142,13 @@ export class PageList extends Page {
             this.parseListInfo();
             this.extractAid();
         }
+        if (this.aid && (!this.rawInitialState || !this.rawInitialState.videoData)) {
+            this.detailPromise = apiViewDetail(Number(this.aid));
+        }
         
         this.like = new Like();
 
         new Comment();
-        propertyHook(window, '__INITIAL_STATE__', undefined);
         propertyHook(window, '__playinfo__', undefined);
 
         // ======== AV页基础功能 ========
@@ -673,7 +696,7 @@ export class PageList extends Page {
 
     /** 添加播放器启动代码 */
     protected embedPlayer() {
-        webpackHook(717, 286, code => code.replace('e("setVideoData",t)', `e("setVideoData",t);$("#bofqi").attr("id","__bofqi").html('<div class="bili-wrapper" id="bofqi"><div id="player_placeholder"></div></div>');new Function('EmbedPlayer',t.embedPlayer)(window.EmbedPlayer);`));
+        webpackHook(717, 286, code => code.replace('e("setVideoData",t)', `e("setVideoData",t);$("#bofqi").attr("id","__bofqi").html('<div class="bili-wrapper" id="bofqi"><div id="player_placeholder"></div></div>');try{if(typeof t.embedPlayer==='string'){new Function('EmbedPlayer',t.embedPlayer)(window.EmbedPlayer)}else if(window.EmbedPlayer){window.EmbedPlayer('player','','aid='+(t.aid||'')+'&cid='+(t.cid||(t.pages&&t.pages[0]&&t.pages[0].cid)||''))}}catch(e){console.error(e)}`));
     }
 
     /** 跳过充电鸣谢 */
@@ -690,42 +713,104 @@ export class PageList extends Page {
         }
     }
 
+    /** 构建 Detail 响应结构 */
+    protected buildDetailFromState(state: any) {
+        const view = { ...state.videoData };
+        if (!view.pages || !view.pages.length) {
+            view.pages = [{ cid: view.cid || state.cid, page: 1, from: 'vupload', part: view.title, duration: view.duration || 0 }];
+        }
+        if (view.stat) {
+            view.stat = { ...view.stat };
+        }
+        const upData = state.upData ? { ...state.upData } : (view.owner ? { mid: view.owner.mid, name: view.owner.name, face: view.owner.face } : {});
+        upData.vip = upData.vip || { vipStatus: 0, vipType: 0 };
+        upData.official_verify = upData.official_verify || { type: -1, desc: '' };
+        upData.pendant = upData.pendant || { image: '' };
+        upData.nameplate = upData.nameplate || { image: '' };
+        upData.level_info = upData.level_info || { current_level: 0 };
+        upData.fans = upData.fans || 0;
+        upData.archiveCount = upData.archiveCount || 0;
+        upData.sign = upData.sign || '';
+        return {
+            code: 0,
+            message: "0",
+            ttl: 1,
+            data: {
+                View: view,
+                Card: {
+                    card: upData,
+                    archive_count: upData.archiveCount || (state.upData && state.upData.archiveCount) || 0
+                },
+                Tags: (state.tags || []).map((t: any) => typeof t === 'string' ? { tag_name: t } : t),
+                Related: state.related || [],
+                Reply: { page: {}, replies: [] }
+            }
+        };
+    }
+
+    /** 处理视频详情数据（注册 stat、staff、推荐相关 hook，不触发 ugcSection） */
+    protected handleDetailData(res: any) {
+        if (res && res.data) {
+            if (res.data.View) {
+                const stat = res.data.View.stat || {};
+                const response = `{ "code": 0, "message": "0", "ttl": 1, "data": ${JSON.stringify(stat)} }`;
+                xhrHook.async('/x/web-interface/archive/stat?', undefined, async () => {
+                    return { response, responseText: response, responseType: 'json' };
+                });
+                Promise.resolve().then(() => {
+                    user.userStatus!.staff && res.data.View.staff && this.staff(res.data.View.staff);
+                });
+                // 不触发 ugcSection —— 列表播放由 initList 管理
+                // 记录视频数据
+                videoInfo.aidDatail(res.data.View);
+            }
+            if (res.data.Related) {
+                const response = JSON.stringify(res.data.Related.map((d: any) => {
+                    return [d.pic, d.aid, d.title, d.stat ? d.stat.view : '', d.stat ? d.stat.danmaku : '', , d.stat ? d.stat.favorite : ''];
+                }));
+                xhrHook.async('comment.bilibili.com/playtag', undefined, async () => {
+                    return { response, responseText: response, responseType: 'json' };
+                }, false);
+            }
+        }
+    }
+
     /**
      * 检查页面是否失效及bangumi跳转
-     * 注意：与 PageAV 不同，此处不触发 ugcSection（合集播单由本类自行管理）
+     * 拦截 view/detail jsonp 请求
      */
     protected aidLostCheck() {
-        jsonpHook("api.bilibili.com/x/web-interface/view/detail", undefined, (res, r, call) => {
-            if (0 !== res.code) {
-                const obj = urlObj(r);
-                if (obj.aid) {
-                    this.aid = <number>obj.aid;
-                    this.getVideoInfo().then(d => call(d)).catch(() => call(res));
-                    return true
+        jsonpHook.async("api.bilibili.com/x/web-interface/view/detail", undefined, async (r: string) => {
+            const obj = urlObj(r);
+            if (obj?.aid) {
+                this.aid = <number>obj.aid;
+            }
+            const matchAid = (st: any) => {
+                if (!st || !st.videoData) return false;
+                if (st.aid == this.aid || st.videoData?.aid == this.aid) return true;
+                if (this.aid && (String(st.aid) === String(this.aid) || String(st.videoData?.aid) === String(this.aid))) return true;
+                return false;
+            };
+            if (!this.rawInitialState || !matchAid(this.rawInitialState)) {
+                const st = getInitialVideoState();
+                if (matchAid(st)) {
+                    this.rawInitialState = st;
                 }
-            } else {
-                if (res.data) {
-                    if (res.data.View) {
-                        const response = `{ "code": 0, "message": "0", "ttl": 1, "data": ${JSON.stringify(res.data.View.stat)} }`;
-                        xhrHook.async('/x/web-interface/archive/stat?', undefined, async () => {
-                            return { response, responseText: response, responseType: 'json' };
-                        });
-                        Promise.resolve().then(() => {
-                            user.userStatus!.staff && res.data.View.staff && this.staff(res.data.View.staff);
-                        });
-                        // 不触发 ugcSection —— 列表播放由 initList 管理
-                        // 记录视频数据
-                        videoInfo.aidDatail(res.data.View);
-                    }
-                    if (res.data.Related) {
-                        const response = JSON.stringify(res.data.Related.map((d: any) => {
-                            return [d.pic, d.aid, d.title, d.stat.view, d.stat.danmaku, , d.stat.favorite]
-                        }));
-                        xhrHook.async('comment.bilibili.com/playtag', undefined, async () => {
-                            return { response, responseText: response, responseType: 'json' }
-                        }, false);
-                    }
-                }
+            }
+            if (this.rawInitialState && matchAid(this.rawInitialState)) {
+                const detail = this.buildDetailFromState(this.rawInitialState);
+                this.handleDetailData(detail);
+                return detail;
+            }
+            try {
+                const pending = this.detailPromise;
+                this.detailPromise = undefined;
+                const data = await (pending || apiViewDetail(this.aid));
+                const detail = { code: 0, message: "0", ttl: 1, data };
+                this.handleDetailData(detail);
+                return detail;
+            } catch (e) {
+                return this.getVideoInfo();
             }
         }, false);
     }

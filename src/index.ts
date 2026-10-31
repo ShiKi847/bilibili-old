@@ -36,8 +36,80 @@ import { PageTv } from './page/channel/tv';
 import { PageDocumentary } from './page/channel/documentary';
 import { loginExit } from './page/logout';
 import { PageOnline } from './page/online';
+import { webpackBlock, webpackUnblock } from './utils/hook/webpack';
 
 document.domain = 'bilibili.com';
+
+// 提前拦截新版视频页的 webpackJsonp（/bfs/static/jinkela/video/），防止 GM.getValue 异步等待期间新版 CSR video.js 提前挂载覆盖旧版 DOM
+if (/(\/s)?\/video\/[AaBb][Vv]/.test(location.href) || (/\/list\/(ml)?\d/.test(location.href) && !/watchlater/.test(location.href))) {
+    webpackBlock([/\/bfs\/static\/jinkela\/video\//]);
+}
+
+// 提前拦截并捕获首屏状态 __INITIAL_STATE__ 与 __playinfo__
+// 1. 无论是首屏同步还是异步注入，都能完整捕获到原始数据，避免多标签并发时因时序丢失首屏状态
+// 2. 默认透传原始值，避免破坏其他页面（如专栏、番剧、未开启重写的页面）或导致新版脚本在重写前提前触发异常分支
+let initialVideoState: any = (window as any).__INITIAL_STATE__;
+let currentInitialState: any = initialVideoState;
+let initialStateLocked = false;
+try {
+    Object.defineProperty(window, '__INITIAL_STATE__', {
+        configurable: true,
+        get: () => initialStateLocked ? undefined : currentInitialState,
+        set: (v: any) => {
+            currentInitialState = v;
+            if (v && typeof v === 'object') {
+                if (v.videoData || v.aid || v.bvid || !initialVideoState) {
+                    initialVideoState = v;
+                }
+            }
+        }
+    });
+} catch (e) { }
+
+let initialPlayInfo: any = (window as any).__playinfo__;
+let currentPlayInfo: any = initialPlayInfo;
+let playInfoLocked = false;
+try {
+    Object.defineProperty(window, '__playinfo__', {
+        configurable: true,
+        get: () => playInfoLocked ? undefined : currentPlayInfo,
+        set: (v: any) => {
+            currentPlayInfo = v;
+            if (v) initialPlayInfo = v;
+        }
+    });
+} catch (e) { }
+
+export function getInitialVideoState() {
+    if (initialVideoState?.videoData) return initialVideoState;
+    try {
+        const appEl = document.getElementById('app') || document.getElementById('video-page-app');
+        const storeState = (appEl as any)?.__vue__?.$store?.state;
+        if (storeState && (storeState.videoData?.aid || storeState.aid)) {
+            initialVideoState = {
+                ...storeState,
+                aid: storeState.aid || storeState.videoData?.aid,
+                bvid: storeState.bvid || storeState.videoData?.bvid,
+                cid: storeState.cid || storeState.videoData?.cid,
+                videoData: storeState.videoData ? { ...storeState.videoData } : undefined,
+                upData: storeState.upData ? { ...storeState.upData } : undefined,
+                tags: Array.isArray(storeState.tags) ? [...storeState.tags] : undefined,
+                related: Array.isArray(storeState.related) ? [...storeState.related] : undefined,
+            };
+            return initialVideoState;
+        }
+    } catch (e) { }
+    return initialVideoState;
+}
+
+export function getInitialPlayInfo() {
+    return initialPlayInfo;
+}
+
+export function lockInitialState() {
+    initialStateLocked = true;
+    playInfoLocked = true;
+}
 
 // 提取版本哈希（仅限用户脚本）
 BLOD.version = GM.info?.script.version.slice(-40);
@@ -68,6 +140,8 @@ user.addCallback(status => {
             BLOD.path[3] === "s" && urlCleaner.updateLocation(location.href.replace("s/video", "video"));
             player.loadEmbedPlayer();
             new PageAV();
+        } else if (!listHandled) {
+            webpackUnblock();
         }
         if (status.player && (/\/festival\//.test(location.href) || (/player\./.test(location.href) || /webplayer\/embed/.test(location.href) && !location.href.includes("ancient")))) {
             player.loadConnectPlayer();

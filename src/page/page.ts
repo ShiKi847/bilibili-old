@@ -1,4 +1,5 @@
 import { toast } from "../core/toast";
+import { webpackBlock } from "../utils/hook/webpack";
 import { poll } from "../utils/poll";
 import { VdomTool } from "../utils/vdomtool";
 
@@ -38,6 +39,7 @@ export abstract class Page {
         const keepNextHeadMarker = this.keepNextHeadMarker || !!document.head?.querySelector('meta[name="next-head-count"]');
         const neutralizeScriptPatterns = this.neutralizeScriptPatterns;
         this.neutralizeOriginalScripts();
+        this.cleanupModernRuntime();
         // 清理新版页面注入的 INITIAL_STATE，避免旧版脚本读取到新版结构
         try {
             if (!this.keepInitialState) {
@@ -46,13 +48,59 @@ export abstract class Page {
         } catch (e) { }
         // 删除webpackJsonp残留
         this.webpackJsonp || Reflect.deleteProperty(window, 'webpackJsonp');
-        neutralizeScriptPatterns?.length && this.guardWebpackJsonp(neutralizeScriptPatterns);
+        if (neutralizeScriptPatterns?.length) {
+            this.webpackJsonp ? webpackBlock(neutralizeScriptPatterns) : this.guardWebpackJsonp(neutralizeScriptPatterns);
+        }
         // 刷新DOM
         this.vdom.replace(document.documentElement);
         keepNextHeadMarker && this.restoreNextHeadMarker();
         // 还原标题
         title && !title.includes("404") && (document.title = title);
         setTimeout(() => this.loadedCallback());
+    }
+    /** 清理已提前执行的新版页面全局运行时残留（如新版 Vue、VueRouter、UserStatus），防止旧版 vendor.js 触发 Cannot redefine property: $router 等冲突 */
+    protected cleanupModernRuntime() {
+        const win = <any>window;
+        try {
+            ['#app', '#video-page-app'].forEach(selector => {
+                const el = document.querySelector<any>(selector);
+                const vm = el?.__vue__;
+                if (vm) {
+                    if (vm.$router) {
+                        try {
+                            vm.$router.push = () => Promise.resolve();
+                            vm.$router.replace = () => Promise.resolve();
+                            vm.$router.go = () => { };
+                        } catch (e) { }
+                    }
+                    try {
+                        vm.$destroy?.();
+                    } catch (e) { }
+                    try {
+                        el.__vue__ = null;
+                    } catch (e) { }
+                }
+            });
+        } catch (e) { }
+        try {
+            // 新版 video.js 会把内部已安装 VueRouter 的 Vue 暴露到 window.Vue（且 $router/$route 为不可配置属性）
+            // 旧版 vendor.js 加载 vue-router 时若检测到 window.Vue 会自动执行 window.Vue.use(VueRouter) 导致重定义 $router 抛异常直接崩溃
+            if (win.Vue) {
+                try {
+                    if (win.Vue.prototype) {
+                        win.Vue.prototype.$mount = function () { return this; };
+                    }
+                } catch (e) { }
+                Reflect.deleteProperty(window, 'Vue');
+            }
+        } catch (e) { }
+        try {
+            // 新版 header-v2 会设置不兼容的 window.UserStatus（缺少 onLoaded / loadLoginStatus），导致旧版 header.js 和 video.js 跳过初始化
+            if (win.UserStatus && typeof win.loadLoginStatus !== 'function') {
+                Reflect.deleteProperty(window, 'UserStatus');
+                Reflect.deleteProperty(window, 'onLoginInfoLoaded');
+            }
+        } catch (e) { }
     }
     /** 阻止原新版页面脚本与旧版模板脚本抢同一个 webpackJsonp/DOM 运行时 */
     protected neutralizeOriginalScripts() {
@@ -124,8 +172,10 @@ export abstract class Page {
     /** 重写完成回调 */
     protected loadedCallback() {
         this.initilized = true;
-        poll(() => document.readyState === "complete", () => {
-            document.querySelector("#jvs-cert") || window.dispatchEvent(new ProgressEvent("load"));
+        this.vdom.scriptsReady.then(() => {
+            poll(() => document.readyState === "complete", () => {
+                document.querySelector("#jvs-cert") || window.dispatchEvent(new ProgressEvent("load"));
+            });
         });
     }
 }

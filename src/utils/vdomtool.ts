@@ -3,6 +3,11 @@ import { htmlVnode, normalizeVdom, Vdom } from "./htmlvnode";
 
 export class VdomTool {
     protected vdom: Vdom[];
+    protected scriptPromises: Promise<void>[] = [];
+    get scriptsReady(): Promise<void> {
+        if (!this.scriptPromises.length) return Promise.resolve();
+        return Promise.all(this.scriptPromises).then(() => { });
+    }
     constructor(html: string | Vdom[]) {
         if (typeof html === 'string') {
             this.vdom = normalizeVdom(htmlVnode(html));
@@ -12,6 +17,7 @@ export class VdomTool {
     }
     /** 生成 DocumentFragment（会过滤script标签，请稍后使用`loadScript`方法依次运行所有script） */
     toFragment() {
+        this.scriptPromises = [];
         const fragment = document.createDocumentFragment();
         this.vdom.forEach(d => {
             fragment.appendChild(this.createElement(d));
@@ -37,6 +43,14 @@ export class VdomTool {
         if (element.tagName === 'script') {
             // 保障脚本依次执行
             (<HTMLScriptElement>node).async = false;
+            if (element.props?.src) {
+                this.scriptPromises.push(new Promise<void>(resolve => {
+                    const done = () => resolve();
+                    node.addEventListener('load', done, { once: true });
+                    node.addEventListener('error', done, { once: true });
+                    setTimeout(done, 10000);
+                }));
+            }
         }
         element.children && element.children.forEach(d => {
             node.appendChild(this.createElement(d));

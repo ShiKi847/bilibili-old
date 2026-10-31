@@ -14,6 +14,7 @@ import { apiBiliplusView } from "../io/api-biliplus-view";
 import { apiViewDetail, ApiViewDetail } from "../io/api-view-detail";
 import menuConfig from '../json/sort.txt';
 import toview from '../json/toview.json';
+import { AV } from "../utils/av";
 import { addCss } from "../utils/element";
 import { objUrl, urlObj } from "../utils/format/url";
 import { propertyHook } from "../utils/hook/method";
@@ -23,10 +24,23 @@ import { xhrHook } from "../utils/hook/xhr";
 import { poll } from "../utils/poll";
 import { Scrollbar } from "../utils/scrollbar";
 import { PageBangumi } from "./bangumi";
+import { getInitialVideoState, lockInitialState } from "../index";
 import { Header } from "./header";
 import { Page } from "./page";
 
+const modernVideoScriptPatterns = [
+    /\/bfs\/static\/jinkela\/video\//,
+    /\/bfs\/static\/player\/main\//,
+    /\/bfs\/seed\/jinkela\/short\/b-mirror\//,
+];
+
 export class PageAV extends Page {
+
+    /** 原始首屏状态备份 */
+    protected rawInitialState: any;
+
+    /** 预请求的详情数据 Promise */
+    protected detailPromise?: Promise<any>;
 
     /** 销毁标记，当前已不是av页，部分回调禁止生效 */
     protected destroy = false;
@@ -38,6 +52,10 @@ export class PageAV extends Page {
 
     protected webpackJsonp = true;
 
+    protected keepInitialState = true;
+
+    protected neutralizeScriptPatterns = modernVideoScriptPatterns;
+
     protected get aid() {
         return BLOD.aid;
     }
@@ -48,10 +66,26 @@ export class PageAV extends Page {
 
     constructor() {
         super(html);
-        location.href.replace(/av\d+/i, d => this.aid = <any>d.slice(2));
+        this.rawInitialState = getInitialVideoState() || (window as any).__INITIAL_STATE__;
+        lockInitialState();
+        propertyHook(window, '__INITIAL_STATE__', undefined);
+        if (!this.aid) {
+            location.href.replace(/av\d+/i, d => this.aid = <any>d.slice(2));
+            if (!this.aid) {
+                const bv = location.pathname.match(/\/(BV[\w]+)/i);
+                if (bv) {
+                    this.aid = Number(AV.fromBV(bv[1]));
+                }
+            }
+            if (!this.aid && this.rawInitialState?.aid) {
+                this.aid = Number(this.rawInitialState.aid);
+            }
+        }
+        if (this.aid && (!this.rawInitialState || !this.rawInitialState.videoData)) {
+            this.detailPromise = apiViewDetail(Number(this.aid));
+        }
         new Comment();
         this.like = new Like();
-        propertyHook(window, '__INITIAL_STATE__', undefined);
         propertyHook(window, '__playinfo__', undefined);
         location.href.includes("/s/video") && urlCleaner.updateLocation(location.href.replace("s/video", "video"));
         this.enLike();
@@ -71,6 +105,8 @@ export class PageAV extends Page {
         Header.primaryMenu();
         Header.banner();
         this.updateDom();
+        // 确保新版脚本若在切页前把地址栏改回 BV 号，在旧版脚本读取路由前还原为 av 号
+        urlCleaner.location();
     }
 
     /**
@@ -133,7 +169,7 @@ export class PageAV extends Page {
      * 无`__INITIAL_STATE__`启动
      */
     protected embedPlayer() {
-        webpackHook(717, 286, code => code.replace('e("setVideoData",t)', `e("setVideoData",t);$("#bofqi").attr("id","__bofqi").html('<div class="bili-wrapper" id="bofqi"><div id="player_placeholder"></div></div>');new Function('EmbedPlayer',t.embedPlayer)(window.EmbedPlayer);`));
+        webpackHook(717, 286, code => code.replace('e("setVideoData",t)', `e("setVideoData",t);$("#bofqi").attr("id","__bofqi").html('<div class="bili-wrapper" id="bofqi"><div id="player_placeholder"></div></div>');try{if(typeof t.embedPlayer==='string'){new Function('EmbedPlayer',t.embedPlayer)(window.EmbedPlayer)}else if(window.EmbedPlayer){window.EmbedPlayer('player','','aid='+(t.aid||'')+'&cid='+(t.cid||(t.pages&&t.pages[0]&&t.pages[0].cid)||''))}}catch(e){console.error(e)}`));
     }
 
     /** 跳过充电鸣谢 */
@@ -150,43 +186,108 @@ export class PageAV extends Page {
         }
     }
 
-    /** 检查页面是否失效及bangumi跳转 */
+    /** 构建 Detail 响应结构 */
+    protected buildDetailFromState(state: any) {
+        const view = { ...state.videoData };
+        if (!view.pages || !view.pages.length) {
+            view.pages = [{ cid: view.cid || state.cid, page: 1, from: 'vupload', part: view.title, duration: view.duration || 0 }];
+        }
+        if (view.stat) {
+            view.stat = { ...view.stat };
+        }
+        const upData = state.upData ? { ...state.upData } : (view.owner ? { mid: view.owner.mid, name: view.owner.name, face: view.owner.face } : {});
+        upData.vip = upData.vip || { vipStatus: 0, vipType: 0 };
+        upData.official_verify = upData.official_verify || { type: -1, desc: '' };
+        upData.pendant = upData.pendant || { image: '' };
+        upData.nameplate = upData.nameplate || { image: '' };
+        upData.level_info = upData.level_info || { current_level: 0 };
+        upData.fans = upData.fans || 0;
+        upData.archiveCount = upData.archiveCount || 0;
+        upData.sign = upData.sign || '';
+        return {
+            code: 0,
+            message: "0",
+            ttl: 1,
+            data: {
+                View: view,
+                Card: {
+                    card: upData,
+                    archive_count: upData.archiveCount || (state.upData && state.upData.archiveCount) || 0
+                },
+                Tags: (state.tags || []).map((t: any) => typeof t === 'string' ? { tag_name: t } : t),
+                Related: state.related || [],
+                Reply: { page: {}, replies: [] }
+            }
+        };
+    }
+
+    /** 处理视频详情数据（注册 stat、staff、合集、推荐相关 hook） */
+    protected handleDetailData(res: any) {
+        if (res && res.data) {
+            if (res.data.View) {
+                const stat = res.data.View.stat || {};
+                const response = `{ "code": 0, "message": "0", "ttl": 1, "data": ${JSON.stringify(stat)} }`;
+                xhrHook.async('/x/web-interface/archive/stat?', undefined, async () => {
+                    // 原接口被429，使用本处数据替代
+                    return { response, responseText: response, responseType: 'json' };
+                });
+                Promise.resolve().then(() => {
+                    user.userStatus!.staff && res.data.View.staff && this.staff(res.data.View.staff);
+                });
+                if (user.userStatus!.ugcSection && res.data.View.ugc_season) {
+                    this.ugcSection(res.data.View.ugc_season, res.data.View.owner);
+                }
+                // 记录视频数据
+                videoInfo.aidDatail(res.data.View);
+            }
+            if (res.data.Related) {
+                const response = JSON.stringify(res.data.Related.map((d: any) => {
+                    return [d.pic, d.aid, d.title, d.stat ? d.stat.view : '', d.stat ? d.stat.danmaku : '', , d.stat ? d.stat.favorite : ''];
+                }));
+                xhrHook.async('comment.bilibili.com/playtag', undefined, async () => {
+                    // 推荐视频接口404
+                    return { response, responseText: response, responseType: 'json' };
+                }, false);
+            }
+        }
+    }
+
+    /** 检查页面是否失效及bangumi跳转，拦截 view/detail jsonp 请求 */
     protected aidLostCheck() {
-        jsonpHook("api.bilibili.com/x/web-interface/view/detail", undefined, (res, r, call) => {
-            if (0 !== res.code) {
-                const obj = urlObj(r);
-                if (obj.aid) {
-                    this.aid = <number>obj.aid;
-                    this.getVideoInfo().then(d => call(d)).catch(() => call(res));
-                    return true
+        jsonpHook.async("api.bilibili.com/x/web-interface/view/detail", undefined, async (r: string) => {
+            const obj = urlObj(r);
+            if (obj?.aid) {
+                this.aid = <number>obj.aid;
+            }
+            const matchAid = (st: any) => {
+                if (!st || !st.videoData) return false;
+                if (st.aid == this.aid || st.videoData?.aid == this.aid) return true;
+                if (this.aid && (String(st.aid) === String(this.aid) || String(st.videoData?.aid) === String(this.aid))) return true;
+                return false;
+            };
+            if (!this.rawInitialState || !matchAid(this.rawInitialState)) {
+                const st = getInitialVideoState();
+                if (matchAid(st)) {
+                    this.rawInitialState = st;
                 }
-            } else {
-                if (res.data) {
-                    if (res.data.View) {
-                        const response = `{ "code": 0, "message": "0", "ttl": 1, "data": ${JSON.stringify(res.data.View.stat)} }`;
-                        xhrHook.async('/x/web-interface/archive/stat?', undefined, async () => {
-                            // 原接口被429，使用本处数据替代
-                            return { response, responseText: response, responseType: 'json' };
-                        });
-                        Promise.resolve().then(() => {
-                            user.userStatus!.staff && res.data.View.staff && this.staff(res.data.View.staff);
-                        });
-                        if (user.userStatus!.ugcSection && res.data.View.ugc_season) {
-                            this.ugcSection(res.data.View.ugc_season, res.data.View.owner);
-                        }
-                        // 记录视频数据
-                        videoInfo.aidDatail(res.data.View);
-                    }
-                    if (res.data.Related) {
-                        const response = JSON.stringify(res.data.Related.map((d: any) => {
-                            return [d.pic, d.aid, d.title, d.stat.view, d.stat.danmaku, , d.stat.favorite]
-                        }));
-                        xhrHook.async('comment.bilibili.com/playtag', undefined, async () => {
-                            // 推荐视频接口404
-                            return { response, responseText: response, responseType: 'json' }
-                        }, false);
-                    }
-                }
+            }
+            // 优先从首屏状态构造，无网络延迟且避免被风控拦截
+            if (this.rawInitialState && matchAid(this.rawInitialState)) {
+                const detail = this.buildDetailFromState(this.rawInitialState);
+                this.handleDetailData(detail);
+                return detail;
+            }
+            // 否则尝试通过 apiViewDetail 获取（优先复用构造函数中的预请求）
+            try {
+                const pending = this.detailPromise;
+                this.detailPromise = undefined;
+                const data = await (pending || apiViewDetail(this.aid));
+                const detail = { code: 0, message: "0", ttl: 1, data };
+                this.handleDetailData(detail);
+                return detail;
+            } catch (e) {
+                // 降级兜底：通过其他接口获取失效视频或番剧重定向
+                return this.getVideoInfo();
             }
         }, false);
     }

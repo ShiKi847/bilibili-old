@@ -20,13 +20,80 @@ export class ApiViewDetail {
     ttl = 1;
 }
 export async function apiViewDetail(aid: number) {
-    const response = await fetch(objUrl(URLS.VIEW_DETAIL, {
-        aid
-    }), {
-        credentials: 'include'
-    });
-    const json = await response.json();
-    return <IApiViewDetailResponse>jsonCheck(json).data;
+    let viewData: any;
+    try {
+        const viewRes = await fetch(objUrl(URLS.X_VIEW, { aid }), { credentials: 'include' });
+        if (viewRes.ok) {
+            const viewJson = await viewRes.json();
+            if (viewJson && viewJson.code === 0 && viewJson.data) {
+                viewData = viewJson.data;
+            }
+        }
+    } catch { }
+
+    if (!viewData) {
+        try {
+            const viewRes = await fetch(objUrl(URLS.X_VIEW, { aid }));
+            if (viewRes.ok) {
+                const viewJson = await viewRes.json();
+                if (viewJson && viewJson.code === 0 && viewJson.data) {
+                    viewData = viewJson.data;
+                }
+            }
+        } catch { }
+    }
+
+    if (!viewData) {
+        throw new Error(`Failed to fetch view data for av${aid}`);
+    }
+
+    const detail = new ApiViewDetail();
+    detail.data.View = viewData;
+    if (viewData?.owner) {
+        detail.data.Card = <any>{
+            card: {
+                mid: viewData.owner.mid,
+                name: viewData.owner.name,
+                face: viewData.owner.face,
+                vip: { vipStatus: 0, vipType: 0 },
+                official_verify: { type: -1, desc: '' },
+                pendant: { image: '' },
+                nameplate: { image: '' },
+                level_info: { current_level: 0 },
+                fans: 0,
+                archiveCount: 0,
+                sign: ''
+            },
+            archive_count: 0
+        };
+    }
+    try {
+        const mid = viewData?.owner?.mid;
+        const [tagsRes, relatedRes, cardRes] = await Promise.allSettled([
+            fetch(objUrl(URLS.TAG_ARCHIVE, { aid }), { credentials: 'include' }).then(r => r.json()),
+            fetch(objUrl(URLS.ARCHIVE_RELATED, { aid }), { credentials: 'include' }).then(r => r.json()),
+            mid ? fetch(`https://api.bilibili.com/x/web-interface/card?mid=${mid}`, { credentials: 'include' }).then(r => r.json()) : Promise.resolve(null)
+        ]);
+        if (tagsRes.status === 'fulfilled' && tagsRes.value?.data) {
+            detail.data.Tags = tagsRes.value.data;
+        }
+        if (relatedRes.status === 'fulfilled' && relatedRes.value?.data) {
+            detail.data.Related = relatedRes.value.data;
+        }
+        if (cardRes.status === 'fulfilled' && cardRes.value?.data?.card) {
+            const c = cardRes.value.data.card;
+            c.vip = c.vip || { vipStatus: 0, vipType: 0 };
+            c.official_verify = c.official_verify || { type: -1, desc: '' };
+            c.pendant = c.pendant || { image: '' };
+            c.nameplate = c.nameplate || { image: '' };
+            c.level_info = c.level_info || { current_level: 0 };
+            detail.data.Card = {
+                card: c,
+                archive_count: cardRes.value.data.archive_count || 0
+            };
+        }
+    } catch { }
+    return detail.data;
 }
 
 interface IOfficial {
