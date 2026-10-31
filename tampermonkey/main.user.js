@@ -3,9 +3,9 @@
 // @namespace    MotooriKashin
 // @version      10.13.10-c3dd748427ccbbefce8d3423714030e5ad97afd7
 // @description  恢复Bilibili旧版页面，为了那些念旧的人。
-// @author       MotooriKashin, wly5556, FMPeach
-// @homepage     https://github.com/FMPeach/Bilibili-Old
-// @supportURL   https://github.com/FMPeach/Bilibili-Old/issues
+// @author       MotooriKashin, wly5556, FMPeach, ShiKi847
+// @homepage     https://github.com/ShiKi847/bilibili-old
+// @supportURL   https://github.com/ShiKi847/bilibili-old/issues
 // @icon         https://www.bilibili.com/favicon.ico
 // @match        *://*.bilibili.com/*
 // @connect      *

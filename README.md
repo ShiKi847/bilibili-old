@@ -129,7 +129,7 @@ Manifest V3扩展和Tampermonkey用户脚本，恢复B站旧版网页，包括�
 
 ---
 ### 参考致谢
-- **[MotooriKashin](https://github.com/MotooriKashin/Bilibili-Old)、[wly5556](https://github.com/wly5556)：脚本的原作者，感谢其制作及维护过此项目。**
+- **[MotooriKashin](https://github.com/MotooriKashin/Bilibili-Old)、[wly5556](https://github.com/wly5556)、[FMPeach](https://github.com/FMPeach)：脚本的原作者与维护者，感谢其制作及维护过此项目。**
 - [protobufjs](https://github.com/protobufjs/protobuf.js)：protobuf编解码
 - [toastr](https://github.com/CodeSeven/toastr/)：浮动通知
 - [Wayback Machine](https://archive.org/web/)：旧版页面存档
