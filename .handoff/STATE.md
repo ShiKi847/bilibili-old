@@ -1,54 +1,44 @@
 # Bilibili-Old 状态交接档案 (STATE)
 
-> 最后更新：`2026-10-31T13:15:00+09:00` | 当前分支：`master`（与 `dev-update` 同步指向 `81925c97` `v10.13.9`）
+> 最后更新：`2026-10-31T15:38:00+09:00` | 当前分支：`master`（与 `dev-update` 同步，包含 `v10.13.10`）
 
 ---
 
 ## 【1. 全局目标与当前总进度（Overview & Progress）】
 
-- **全局目标**：维护并修复 `Bilibili-Old`（恢复旧版 B 站网页端与旧版播放器的油猴脚本 & Chrome 扩展），持续适配 B 站前端架构升级（如视频页 SSR 转 CSR、接口鉴权/风控升级、Chrome MV3 脚本注入时序变化等）。
-- **当前进度（已完成并合入 `v10.13.9` / commit `81925c97`）**：
-  1. **修复 B 站视频页全面切换 CSR 导致的白屏问题**：
-     - B 站视频页 HTML 不再内嵌 `window.__INITIAL_STATE__`，旧版 `video.js` 发起的 `/x/web-interface/view/detail` JSONP 请求原已强依赖鉴权/风控，而原 `apiViewDetail` 并行请求 4 个接口（`view` + `card` + `tag` + `related`）任一失败即整体 `Promise.all` reject，落入对 15 位新 `aid` 必挂的 `biliplus` 兜底，最终让旧版 `jsonp` 卡死 60 秒白屏。
-     - 已重构 `apiViewDetail`：主请求 `/x/web-interface/view` 支持带 Cookie 与无凭证双路重试，辅请求（`tags` / `related` / `card`）改为 `Promise.allSettled` 非致命降级，并在 `PageAV` / `PageList` 构造函数中提前并发预请求。
-     - 修复 `jsonpHook` 仅拦截 `appendChild` / `insertBefore` 而遗漏 `Element.prototype.append` 的问题；修复无 `embedPlayer` 字符串字段时旧版播放器无法引导启动的问题（回退直调 `window.EmbedPlayer('player', '', 'aid=...&cid=...')`）。
-  2. **修复 Chrome MV3 延迟注入（「先闪出新版画面，再切回旧版」）引发的必现白屏**：
-     - 查明新版 `video.js` 会把已安装不可配置 `$router`/`$route` 的内部 Vue 暴露到 `window.Vue`，切回旧版加载 `vendor.b1b7706...js` 时触发 `window.Vue.use(VueRouter)` 抛出 `Uncaught TypeError: Cannot redefine property: $router` 直接炸毁旧版入口。
-     - 已在 `Page.cleanupModernRuntime()` 中销毁新版残留 Vue 实例、禁用其 `$router.push/replace`、置空新版 `Vue.prototype.$mount` 并删除 `window.Vue` 与不兼容的 `window.UserStatus`。
-     - 已在 `getInitialVideoState()` 中支持重写 DOM 前直接从已挂载新版 `#app.__vue__.$store.state` 提取现成 CSR 视频数据（零额外请求）。
-     - 已在 `VdomTool` 中追踪外部 `<script src>` 加载状态（`scriptsReady`），解决 `document.readyState === "complete"` 时 `Page.loadedCallback()` 在 0ms 提前派发 `load` 事件导致 `footer.js` 底栏丢失的问题。
-     - 已修复 `Player.EmbedPlayer()` 中 `await oldPlayer.disconnect()` 异步完成后误清空已替换旧版 `#bofqi` 容器的竞态。
+- **全局目标**：维护并修复 `Bilibili-Old`（恢复旧版 B 站网页端与旧版播放器的油猴脚本 & Chrome 扩展），持续适配 B 站前端架构升级（视频页 CSR 改版、多视频合集模式 ugc_season 升级、鉴权风控等）。
+- **当前进度（已完成合入 `v10.13.10`）**：
+  1. **支持与适配新版 B 站视频合集（`ugc_season` 多视频聚合）功能**：
+     - **右侧合集面板默认展开与标题展示**：在合集模式初始化与 `player.addModifyArgument` 中设置 `sessionStorage.setItem("player_last_filter_tab_info", 3)`，载入视频时默认展开右侧合集面板（对应旧版 `TAB_PLAYLIST`）；配置 `toview.name = season.title`、`toview.pid = season.id || 1`，解除 `.bilibili-player-playlist-nav-title` 隐藏并绑定点击直接打开 UP 空间合集列表页（`//space.bilibili.com/${season.mid}/lists/${season.id}?type=season`）。
+     - **播放器切 P 重构后 UI 状态保持**：实现 `PageAV.updatePlaylistUI`，在初始挂载、`switchVideo` 与 `callAppointPart` 切集时轮询重绑，防止旧版播放器在 `232004` 指令重建 DOM 后标签名回退为「播单」或丢失合集标题跳转。
+     - **顶部分 P 栏（`#v_multipage`）与合集面板双向打通**：移除 `#v_multipage{display:none!important;}`。当合集中的当前视频自身又含有多个分 P 时，播放器上方正常展示分 P 栏，与右侧合集面板内展开的分 P 实时高亮同步；通过 hook Webpack Module 277 将顶部点击切 P 转发为播放器指令 `232004`；hook Module 274 兼容 `beforeRouteUpdate` 的 `{ store, route }` 参数，消除了 `TypeError: i is not a function` 报错。
+     - **切集与切 P 联动健壮性**：`window.callAppointPart` 改为持久化 getter/setter 描述符，防止在严格模式下被 `PlayerAgent` 赋值抛错；支持同 `aid` 仅更新分 P 与地址栏 `?p=`，跨 `aid` 自动请求新视频详情完整刷新标题、简介、统计、评论、标签、UP 主卡片与 `vue.pages`。
+     - **底层数据类型与参数保持**：`window.aid` / `window.cid` setter 统一将纯数字字符串转为 `Number`，保证播放器内部严格匹配；`player.modifyArgument` 改为 `forEach` 避免首次引导后丢弃回调。
 
 ---
 
 ## 【2. 踩坑挑战与死胡同（Challenges & Failed Attempts）】
 
-1. **死胡同 1：试图用 `webpackBlock([/\/bfs\/static\/jinkela\/video\//])` 阻止新版视频页 `video.js` 执行**
-   - **原因**：B 站新版 `video.5e058f5dc...js` 已改为**单文件自包含打包**，全文件 `0` 处访问 `window.webpackJsonp`。`webpackBlock` 只能拦截仍使用 `webpackJsonp` 的分包，对新版 `video.js` 完全无效。**切勿再试图靠拦截 `webpackJsonp` 阻止新版视频页脚本运行**，必须在 DOM 重写前主动提取数据并清理新版写到 `window` 的全局污染（尤其是 `window.Vue`、`window.UserStatus`、`window.player`）。
-2. **死胡同 2：依赖 `apiBiliplusView`（BiliPlus 接口）作为现代视频页常规兜底**
-   - **原因**：B 站当前新投稿 `aid` 已达 15 位（如 `av116053405343378`），BiliPlus 对新视频普遍报错或无缓存；且旧版 `vendor.js` 的 `jsonp` 模块（Module 591）**不监听 `<script>` 的 `error` 事件**，只等 60 秒 `timeout: 6e4` 后跳 `//www.bilibili.com/404`。因此 `view/detail` 的 `jsonpHook.async` 一旦 reject，页面就会白屏僵死 60 秒。必须保证主链路 `apiViewDetail` 足够健壮。
-3. **死胡同 3：构建与环境命令卡点**
-   - 本项目**没有** `npm run build` 脚本！构建命令为：`npm run tampermonkey`（生成 `tampermonkey/main.user.js`）和 `npm run chrome`（生成 Chrome 扩展产物），类型检查为 `npm run tsc`。
-   - 注意：`npm run tsc` 目前在存量文件 `chrome/utils/escape-header.ts`、`chrome/utils/gm.ts`、`src/core/ui/utils/checkbox.ts`、`src/io/grpc/BAPIAppPlayurl/v1/playurl.ts` 上有历史遗留类型报错（`esbuild` 打包不受影响），校验改动时重点确认自己修改的文件无新增 TS 报错即可。
-   - Windows PowerShell 5.1 不支持 `&&` 连接符，多条命令串联必须用 `;`。
-   - 源码文件换行符主要为 `CRLF`（`\r\n`），编辑时注意保持一致。
-4. **安全红线约束**：
-   - 严禁在未经用户明确同意的情况下擅自执行 `git commit`、`git merge`、`git rebase`、`git push`、`git reset`、`git revert`。
-   - 所有 `curl` 命令必须携带 `--connect-timeout 5 -m 15`。
+1. **死胡同 1：在合集模式下直接隐藏 `#v_multipage`**
+   - **原因**：部分合集视频（如 av117194943892429）第 1 个视频本身即包含 13 个分 P，若直接隐藏 `#v_multipage`，用户在播放器上方完全看不到选集按钮，且右侧播放列表若未自动激活为 Tab 3（`TAB_PLAYLIST`），整个页面将陷入完全无集可点的状态。必须保留 `#v_multipage` 并与右侧面板双向通信联动。
+2. **死胡同 2：使用一次性 `propertyHook` 拦截 `callAppointPart`**
+   - **原因**：`propertyHook` 首次 get 之后会将其重新定义为 `writable: false`，当旧版播放器脚本 Module 274 `externalInterface()` 在 `"use strict"` 模式下执行 `window.callAppointPart = window.PlayerAgent.callAppointPart` 时，会抛出不可捕获的 `TypeError: Cannot assign to read only property`，破坏后续 `PlayerMediaLoaded` 注册。必须使用持久化的 getter / setter 描述符。
+3. **死胡同 3：直接调用 `window.GrayManager.reload(e)` 进行分 P 切换**
+   - **原因**：Module 277 默认切 P 会触发 GrayManager 重载，这会导致合集注入的播放器配置参数被冲掉。必须拦截转发为播放器内部指令 `232004`（`cidLoader`）。
+4. **死胡同 4：构建脚本卡点与注意项**
+   - 项目中没有 `npm run build`，构建命令必须使用 `npm run tampermonkey; npm run chrome`，PowerShell 中用 `;` 连接。
+   - `git commit`、`git push` 等 Git 变更动作必须严格获得用户明确授权方可执行。
 
 ---
 
 ## 【3. 跑通的成功经验（Successes & Key Patterns）】
 
-1. **新旧 Vue 同页切换隔离模式**：
-   - 旧版 `vendor.js` 自带内部局部 `Vue`（Module 68），本身不依赖 `window.Vue`，但其中的 `Vuex`、`vue-meta`、`vue-router` 均含有 `window.Vue && window.Vue.use(...)` 自动安装嗅探。只要新版脚本先跑过并暴露了 `window.Vue`，重写前**必须**先置空 `win.Vue.prototype.$mount`（防止在途异步 `Promise.all` 完成后抢挂载 `#video-page-app`）再 `Reflect.deleteProperty(window, 'Vue')`。
-2. **CSR 延迟注入时的零成本数据复用**：
-   - 当油猴注入较晚、新版页面已渲染时，`#app.__vue__.$store.state` 中已有完整的 `{ aid, bvid, cid, videoData, upData, tags, related }`，结构与旧版 `buildDetailFromState(state)` 完全兼容。在 `updateDom()` 销毁原 `#app` 前通过 `getInitialVideoState()` 把它摘出来缓存，可直接秒开旧版页并规避二次请求 412 风控。
-3. **旧版 `VueRouter` 路由强约束**：
-   - 旧版 `video.b1b7706...js` 的路由表**只匹配 `/video/av:id` 和 `/v/video/av:id`**，完全不认识 `/video/BV...`。一旦地址栏被新版残留路由改回 `BV` 号，旧版 `c.getMatchedComponents()` 返回 `[]`，既不发 `asyncData` 也不渲染组件。因此销毁新版 `$router` 后必须立即调用 `urlCleaner.location()` 确保路径回到 `/video/av<aid>`。
-4. **重写模板的 `load` 事件派发时序**：
-   - `VdomTool.createElement` 为所有 `<script>` 设置了 `async = false` 保证按序执行，并通过 `vdom.scriptsReady` 等待全部外部 `<script src>` `load`/`error`（含 10s 超时兜底）后再派发 `window.dispatchEvent(new ProgressEvent("load"))`，可彻底解决晚注入（`readyState === "complete"`）时依赖 `window.onload` 的旧版脚本（如 `footer.js`）不执行的问题。
-5. **标准打包验证流水线**：
+1. **合集面板与标签联动模式**：
+   - 写入 `sessionStorage.setItem("player_last_filter_tab_info", 3)` 可在初始化时直达合集面板。
+   - 通过 `poll` 监听 `.bilibili-player-filter-btn-playlist span` 和 `.bilibili-player-playlist-nav-title`，在播放器任何一次内部销毁重建时，均能秒级把文案恢复为「合集」并重新绑定跳转到 UP 空间合集页面。
+2. **子代理生命周期与任务闭环**：
+   - 主代理在委派任务完成后、给出最终汇报前，必须当场调用 `manage_subagents(Action="kill_all")` 终止子代理，杜绝后台任务挂起。
+3. **标准构建流水线**：
    ```powershell
    npm run tampermonkey; npm run chrome
    ```
@@ -57,31 +47,20 @@
 
 ## 【4. 下一棒唯一待办（Next Problem to Solve）】
 
-- 当前 `v10.13.9`（`81925c97`）视频页 CSR 白屏与延迟注入白屏均已修复并发布，工作区干净（`git status` 无未提交改动）。
-- **下一棒待办**：等待用户反馈新的单个具体页面/接口异常（如后续 B 站其他页面 CSR 化、评论/弹幕/播放列表/顶栏接口变动，或 `v10.13.9` 实测中的边缘场景问题），按「单窗口单问题」接入处理。
+- 工作区变动已打包进 `v10.13.10` 并合入 `master` / 推送至远程仓库。
+- **下一棒待办**：等待用户提出下一个新问题或新的功能/页面适配诉求。
 
 ---
 
 ## 【5. 核心重要文件清单（Important Files ONLY）】
 
-- `d:\Desktop\bilibili_old\src\index.ts`
-  - 首屏状态拦截与新版已挂载 Vuex 状态提取：`getInitialVideoState`、`getInitialPlayInfo`、`lockInitialState`（L48-L120）
-  - 各页面路由分发入口：`user.addCallback`（L123-L227）
-- `d:\Desktop\bilibili_old\src\page\page.ts`
-  - 页面重写主流程：`Page.updateDom`（L35-L60）
-  - 新版全局运行时残留清理（`window.Vue` / `$router` / `UserStatus`）：`Page.cleanupModernRuntime`（L61-L103）
-  - 原页面脚本节点剥离与模板 `load` 事件延后派发：`Page.neutralizeOriginalScripts`（L105-L118）、`Page.loadedCallback`（L172-L179）
 - `d:\Desktop\bilibili_old\src\page\av.ts`
-  - 旧版 AV 页主控制器：`PageAV.constructor`（L67-L110）
-  - 播放器无 `__INITIAL_STATE__` 引导补丁：`PageAV.embedPlayer`（L171-L173）
-  - 视频详情构造与 `view/detail` JSONP 拦截：`PageAV.buildDetailFromState`（L189-L222）、`PageAV.aidLostCheck`（L255-L293）
+  - 合集播单模拟、合集 UI 同步与切 P 回调：`ugcSection`、`updatePlaylistUI`、`callAppointPart`
 - `d:\Desktop\bilibili_old\src\page\list.ts`
-  - 稍后再看以外的 `/list/` 播单重写页（与 `PageAV` 共享同一套 `old_video.js` 717 模块 hook）：`PageList.constructor`（L111-L173）、`PageList.embedPlayer`（L698-L701）、`PageList.aidLostCheck`（L783-L821）
-- `d:\Desktop\bilibili_old\src\io\api-view-detail.ts`
-  - 视频详情容错聚合请求（主接口双路重试 + 辅接口 `Promise.allSettled`）：`apiViewDetail`（L22-L97）
+  - 播单与合集切集逻辑：`initList`、`callAppointPart`、`biliUIcomponents`
 - `d:\Desktop\bilibili_old\src\core\player.ts`
-  - 旧版播放器引导与新版 `nano` 播放器安全断开清理：`Player.EmbedPlayer`（L160-L206）
-- `d:\Desktop\bilibili_old\src\utils\vdomtool.ts`
-  - 虚拟 DOM 转真 DOM 及外部 `<script src>` 就绪追踪：`VdomTool.scriptsReady`、`VdomTool.createElement`（L4-L60）
-- `d:\Desktop\bilibili_old\src\utils\hook\node.ts`
-  - DOM 脚本注入与 JSONP 拦截（含 `appendChild` / `insertBefore` / `append`）：`checkJsonp`、`jsonpHook`、`jsonpHook.async`（L7-L99）
+  - 播放器启动参数修改回调保留：`modifyArgument`
+- `d:\Desktop\bilibili_old\src\core\bilibili-old.ts`
+  - 全局 `aid` / `cid` 类型规整化：`window.aid`、`window.cid` getter/setter
+- `d:\Desktop\bilibili_old\src\index.ts`
+  - 首屏状态提取与校验：`getInitialVideoState`

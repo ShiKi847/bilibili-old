@@ -11,6 +11,23 @@ import { videoInfo } from "./video-info";
 import { urlSign } from "../io/api-sign";
 import { fileRead, saveAs } from "../utils/file";
 
+let _aid: any = (typeof (<any>window).aid === 'string' && /^\d+$/.test((<any>window).aid)) ? Number((<any>window).aid) : (<any>window).aid;
+let _cid: any = (typeof (<any>window).cid === 'string' && /^\d+$/.test((<any>window).cid)) ? Number((<any>window).cid) : (<any>window).cid;
+try {
+    Object.defineProperty(window, 'aid', {
+        configurable: true,
+        enumerable: true,
+        get: () => _aid,
+        set: (v: any) => { _aid = (typeof v === 'string' && /^\d+$/.test(v)) ? Number(v) : v; }
+    });
+    Object.defineProperty(window, 'cid', {
+        configurable: true,
+        enumerable: true,
+        get: () => _cid,
+        set: (v: any) => { _cid = (typeof v === 'string' && /^\d+$/.test(v)) ? Number(v) : v; }
+    });
+} catch (e) { }
+
 /** 用于暴露的统一接口 */
 export const BLOD = new (class {
     /** 路径拆分 */

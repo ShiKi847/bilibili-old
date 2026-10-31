@@ -2,6 +2,7 @@ import { BLOD } from "../core/bilibili-old";
 import { Comment } from "../core/comment";
 import { switchVideo } from "../core/observer";
 import { player } from "../core/player";
+import { sessionStorage } from "../core/storage";
 import { toast } from "../core/toast";
 import { Like } from "../core/ui/like";
 import { urlCleaner } from "../core/url";
@@ -142,7 +143,7 @@ export class PageList extends Page {
             this.parseListInfo();
             this.extractAid();
         }
-        if (this.aid && (!this.rawInitialState || !this.rawInitialState.videoData)) {
+        if (this.aid && (!this.rawInitialState || !this.rawInitialState.videoData?.cid || !Array.isArray(this.rawInitialState.videoData?.pages) || !this.rawInitialState.videoData.pages.length)) {
             this.detailPromise = apiViewDetail(Number(this.aid));
         }
         
@@ -263,11 +264,13 @@ export class PageList extends Page {
      * 4. 替换DOM（等待数据获取完成，确保播放器启动时数据已就绪）
      */
     protected async initList() {
+        sessionStorage.setItem("player_last_filter_tab_info", 3);
         // 注册播单数据注入回调
         // 当播放器启动（EmbedPlayer）时，此回调将 toview 数据以 playlist 参数注入启动命令
         player.addModifyArgument(args => {
             if (this.destroy) return;
             if (!this.listDataReady) return;
+            sessionStorage.setItem("player_last_filter_tab_info", 3);
 
             console.log('player.addModifyArgument: before updateListUrl', { 
                 urlUpdated: this.urlUpdated, 
@@ -296,7 +299,11 @@ export class PageList extends Page {
         });
 
         // 注册切P回调（播单面板点击切换视频时触发）
-        propertyHook(window, 'callAppointPart', this.callAppointPart);
+        Reflect.defineProperty(window, 'callAppointPart', {
+            configurable: true,
+            get: () => this.callAppointPart,
+            set: () => true
+        });
 
         // 获取列表数据
         try {
@@ -324,8 +331,7 @@ export class PageList extends Page {
         // 播单面板样式（延迟到DOM加载完成后注入，避免被播放器脚本覆盖）
         addCss(
             '.bilibili-player .bilibili-player-auxiliary-area .bilibili-player-playlist .bilibili-player-playlist-playlist {height: calc(100% - 45px);}' +
-            '.bilibili-player-playlist-nav-title,.bilibili-player-playlist-nav-ownername{display: none;}' +
-            '#v_multipage{display:none!important;}',
+            '.bilibili-player-playlist-nav-title,.bilibili-player-playlist-nav-ownername{display: none;}',
             'list-playlist'
         );
     }
@@ -518,9 +524,29 @@ export class PageList extends Page {
     /** 播单内切换视频回调（由播放器播单面板触发） */
     protected callAppointPart = (p: number, state: Record<'aid' | 'cid', number>) => {
         if (this.destroy) return Reflect.deleteProperty(window, 'callAppointPart');
+        this.aid = state.aid;
 
         const vue = document.querySelector<any>("#app")?.__vue__;
         if (vue) {
+            const targetP = Number(p) || 1;
+            const sameAid = Number(vue.$store.state.aid) === Number(state.aid);
+            vue.setP(targetP);
+            if (sameAid) {
+                if (this.isFromList) {
+                    this.route.p = targetP > 1 ? String(targetP) : '1';
+                    this.updateListUrl(state.aid);
+                } else {
+                    const pParam = targetP > 1 ? `/?p=${targetP}` : '';
+                    const targetUrl = `/video/av${state.aid}${pParam}`;
+                    const curUrl = location.pathname + location.search;
+                    if (targetP === 1 && curUrl === `/video/av${state.aid}/?p=1`) {
+                        history.replaceState(history.state, '', targetUrl);
+                    } else if (curUrl !== targetUrl && curUrl !== `/video/av${state.aid}/${pParam ? `?p=${targetP}` : ''}`) {
+                        history.pushState(history.state, '', targetUrl);
+                    }
+                }
+                return;
+            }
             // 通过修改Vue组件的aid来刷新评论和标签
             vue.$store.state.aid = state.aid;
 
@@ -529,6 +555,8 @@ export class PageList extends Page {
                 .then(d => {
                     // 简介、标题、视频统计
                     vue.setVideoData(d.View);
+                    vue.pages = d.View.pages || [];
+                    vue.setP(targetP);
                     // 下方视频推荐
                     document.querySelector<any>('#recommend_report')?.__vue__?.init(d.Related);
                     // 标签
@@ -561,12 +589,12 @@ export class PageList extends Page {
                 .finally(() => {
                     if (this.isFromList) {
                         // 保存当前分P到route，供updateListUrl使用
-                        this.route.p = p > 1 ? String(p) : '1';
+                        this.route.p = targetP > 1 ? String(targetP) : '1';
                         // 来自列表页面：修改为列表格式的URL，保留当前分P
                         this.updateListUrl(state.aid);
                     } else {
                         // 普通播放：使用标准AV页URL
-                        const pParam = p && p > 1 ? `/?p=${p}` : '';
+                        const pParam = targetP > 1 ? `/?p=${targetP}` : '';
                         history.pushState(history.state, '', `/video/av${state.aid}${pParam}`);
                     }
                 });
@@ -658,6 +686,15 @@ export class PageList extends Page {
         webpackHook(717, 274, (code: string) => code
             .replace("this.getAdData()", "this.getAdData")
             .replace('ut.MenuConfig[e].name', 'ut.MenuConfig[e].name,url:ut.MenuConfig[e].url,subUrl: ut.MenuConfig[e].sub[a].url')
+            .replace('t.pages.length>1&&t.setP(1)', 't.pages.length>1&&t.setP(Number(t.$route.query.p||1))')
+            .replace('asyncData:function(t,e){var i=t.dispatch,a=(t.state,t.commit);', 'asyncData:function(t,e){if(t&&t.store)return{then:function(t){return t(),{catch:function(){}}}};var i=t.dispatch,a=(t.state,t.commit);')
+        );
+        webpackHook(717, 277, (code: string) => code
+            .replace('watch:{p:function(t){', 'watch:{pages:function(){this.pages.forEach(function(t,e){return t.index=e}),this.col=this.calcCol(),this.needSpread?this.showingPages=this.calcShowingPageByP(this.p):this.showingPages=this.pages},$route:function(){this.setP(Number(this.$route.query.p||this.oldRoute()||1))},p:function(t){')
+            .replace('p:function(){return Number(this.$route.query.p||this.oldRoute()||1)}', 'p:function(){return Number(this.$store.state.p||this.$route.query.p||this.oldRoute()||1)}')
+            .replace('this.calcWidth(this.pages[this.p-1])', 'this.calcWidth(this.pages[this.p-1]||this.pages[0]||{index:0,part:""})')
+            .replace('changeVideo:function(t){', 'changeVideo:function(t){if(this._isDestroyed||!this.pages||!this.pages[t])return;')
+            .replace('window.GrayManager&&window.GrayManager.reload(e)', '(window.player&&window.player.directiveDispatcher&&window.player.getPlaylist&&window.player.getPlaylist()?window.player.directiveDispatcher({_id:1,_origin:"webpage",_directive:232004,data:{aid:Number(this.pages[t].aid||this.aid),cid:Number(this.pages[t].cid)}}):window.GrayManager&&window.GrayManager.reload(e))')
         );
     }
 
@@ -786,7 +823,7 @@ export class PageList extends Page {
                 this.aid = <number>obj.aid;
             }
             const matchAid = (st: any) => {
-                if (!st || !st.videoData) return false;
+                if (!st || !st.videoData || !st.videoData.cid || !Array.isArray(st.videoData.pages) || !st.videoData.pages.length) return false;
                 if (st.aid == this.aid || st.videoData?.aid == this.aid) return true;
                 if (this.aid && (String(st.aid) === String(this.aid) || String(st.videoData?.aid) === String(this.aid))) return true;
                 return false;

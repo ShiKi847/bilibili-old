@@ -81,17 +81,24 @@ try {
 } catch (e) { }
 
 export function getInitialVideoState() {
-    if (initialVideoState?.videoData) return initialVideoState;
+    if (initialVideoState?.videoData?.cid && Array.isArray(initialVideoState.videoData.pages) && initialVideoState.videoData.pages.length > 0) {
+        return initialVideoState;
+    }
     try {
         const appEl = document.getElementById('app') || document.getElementById('video-page-app');
         const storeState = (appEl as any)?.__vue__?.$store?.state;
         if (storeState && (storeState.videoData?.aid || storeState.aid)) {
+            const hasFullVideoData = Boolean(
+                storeState.videoData?.cid &&
+                Array.isArray(storeState.videoData.pages) &&
+                storeState.videoData.pages.length > 0
+            );
             initialVideoState = {
                 ...storeState,
                 aid: storeState.aid || storeState.videoData?.aid,
                 bvid: storeState.bvid || storeState.videoData?.bvid,
                 cid: storeState.cid || storeState.videoData?.cid,
-                videoData: storeState.videoData ? { ...storeState.videoData } : undefined,
+                videoData: hasFullVideoData ? { ...storeState.videoData } : undefined,
                 upData: storeState.upData ? { ...storeState.upData } : undefined,
                 tags: Array.isArray(storeState.tags) ? [...storeState.tags] : undefined,
                 related: Array.isArray(storeState.related) ? [...storeState.related] : undefined,

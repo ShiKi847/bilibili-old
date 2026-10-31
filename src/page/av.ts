@@ -1,6 +1,8 @@
 import { BLOD } from "../core/bilibili-old";
 import { Comment } from "../core/comment";
+import { switchVideo } from "../core/observer";
 import { player } from "../core/player";
+import { sessionStorage } from "../core/storage";
 import { toast } from "../core/toast";
 import { Like } from "../core/ui/like";
 import { urlCleaner } from "../core/url";
@@ -48,6 +50,9 @@ export class PageAV extends Page {
     /** 合作UP主模式 */
     protected _isStaffMode = false;
 
+    /** 同步合集面板UI（切P重载播放器后需重新应用） */
+    protected updatePlaylistUI?: () => void;
+
     protected like: Like;
 
     protected webpackJsonp = true;
@@ -81,7 +86,7 @@ export class PageAV extends Page {
                 this.aid = Number(this.rawInitialState.aid);
             }
         }
-        if (this.aid && (!this.rawInitialState || !this.rawInitialState.videoData)) {
+        if (this.aid && (!this.rawInitialState || !this.rawInitialState.videoData?.cid || !Array.isArray(this.rawInitialState.videoData?.pages) || !this.rawInitialState.videoData.pages.length)) {
             this.detailPromise = apiViewDetail(Number(this.aid));
         }
         new Comment();
@@ -120,6 +125,15 @@ export class PageAV extends Page {
         webpackHook(717, 274, (code: string) => code
             .replace("this.getAdData()", "this.getAdData")
             .replace('ut.MenuConfig[e].name', 'ut.MenuConfig[e].name,url:ut.MenuConfig[e].url,subUrl: ut.MenuConfig[e].sub[a].url')
+            .replace('t.pages.length>1&&t.setP(1)', 't.pages.length>1&&t.setP(Number(t.$route.query.p||1))')
+            .replace('asyncData:function(t,e){var i=t.dispatch,a=(t.state,t.commit);', 'asyncData:function(t,e){if(t&&t.store)return{then:function(t){return t(),{catch:function(){}}}};var i=t.dispatch,a=(t.state,t.commit);')
+        );
+        webpackHook(717, 277, (code: string) => code
+            .replace('watch:{p:function(t){', 'watch:{pages:function(){this.pages.forEach(function(t,e){return t.index=e}),this.col=this.calcCol(),this.needSpread?this.showingPages=this.calcShowingPageByP(this.p):this.showingPages=this.pages},$route:function(){this.setP(Number(this.$route.query.p||this.oldRoute()||1))},p:function(t){')
+            .replace('p:function(){return Number(this.$route.query.p||this.oldRoute()||1)}', 'p:function(){return Number(this.$store.state.p||this.$route.query.p||this.oldRoute()||1)}')
+            .replace('this.calcWidth(this.pages[this.p-1])', 'this.calcWidth(this.pages[this.p-1]||this.pages[0]||{index:0,part:""})')
+            .replace('changeVideo:function(t){', 'changeVideo:function(t){if(this._isDestroyed||!this.pages||!this.pages[t])return;')
+            .replace('window.GrayManager&&window.GrayManager.reload(e)', '(window.player&&window.player.directiveDispatcher&&window.player.getPlaylist&&window.player.getPlaylist()?window.player.directiveDispatcher({_id:1,_origin:"webpage",_directive:232004,data:{aid:Number(this.pages[t].aid||this.aid),cid:Number(this.pages[t].cid)}}):window.GrayManager&&window.GrayManager.reload(e))')
         );
     }
 
@@ -260,7 +274,7 @@ export class PageAV extends Page {
                 this.aid = <number>obj.aid;
             }
             const matchAid = (st: any) => {
-                if (!st || !st.videoData) return false;
+                if (!st || !st.videoData || !st.videoData.cid || !Array.isArray(st.videoData.pages) || !st.videoData.pages.length) return false;
                 if (st.aid == this.aid || st.videoData?.aid == this.aid) return true;
                 if (this.aid && (String(st.aid) === String(this.aid) || String(st.videoData?.aid) === String(this.aid))) return true;
                 return false;
@@ -408,6 +422,9 @@ export class PageAV extends Page {
 
     /** 合集（使用播单模拟） */
     protected ugcSection(season: Record<string, any>, owner: any) {
+        sessionStorage.setItem("player_last_filter_tab_info", 3);
+        (<any>toview).name = season.title;
+        (<any>toview).owner = owner;
         toview.cover = season.cover;
         toview.count = season.ep_count;
         toview.id = season.id;
@@ -419,7 +436,7 @@ export class PageAV extends Page {
         toview.stat.reply = season.stat.reply;
         toview.stat.share = season.stat.share;
         toview.stat.view = season.stat.view;
-        toview.pid = -1 // 隐藏播单号
+        toview.pid = season.id || 1;
         toview.list = season.sections.reduce((s: any[], d: any) => {
             d.episodes.forEach((d: any) => {
                 // 使用顶层 pages 字段拿完整多P列表，回退到 [d.page]
@@ -452,28 +469,79 @@ export class PageAV extends Page {
             });
             return s;
         }, []);
+        videoInfo.toview(toview);
         player.addModifyArgument(args => {
             if (this.destroy) return;
+            sessionStorage.setItem("player_last_filter_tab_info", 3);
             const obj = urlObj(`?${args[2]}`);
             obj.playlist = encodeURIComponent(JSON.stringify({ code: 0, data: toview, message: "0", ttl: 1 }));
             args[2] = objUrl('', obj);
         });
-        propertyHook(window, 'callAppointPart', this.callAppointPart);
-        // 修正播单列表高度；合集模式下隐藏页面自带的分P列表（由播单面板接管）
-        addCss('.bilibili-player .bilibili-player-auxiliary-area .bilibili-player-playlist .bilibili-player-playlist-playlist {height: calc(100% - 45px);}.bilibili-player-playlist-nav-title,.bilibili-player-playlist-nav-ownername{display: none;}#v_multipage{display:none!important;}');
+        Reflect.defineProperty(window, 'callAppointPart', {
+            configurable: true,
+            get: () => this.callAppointPart,
+            set: () => true
+        });
+        // 修正播单列表高度与合集标题样式，保留顶部自带的分P列表并与右侧合集面板联动
+        addCss('.bilibili-player .bilibili-player-auxiliary-area .bilibili-player-playlist .bilibili-player-playlist-playlist {height: calc(100% - 73px);}.bilibili-player-playlist-nav-ownername{display: none;}.bilibili-player-playlist-nav-title{white-space: nowrap;}');
+        this.updatePlaylistUI = () => {
+            if (this.destroy) return;
+            poll(() => {
+                const node = document.querySelector<HTMLElement>('.bilibili-player-filter-btn-playlist span');
+                return node && node.textContent !== '合集' ? node : null;
+            }, node => {
+                if (this.destroy) return;
+                node.textContent = '合集';
+            });
+            poll(() => {
+                const node = document.querySelector<HTMLElement>('.bilibili-player-playlist-nav-title');
+                return node && !node.dataset.seasonBound ? node : null;
+            }, node => {
+                if (this.destroy) return;
+                node.dataset.seasonBound = '1';
+                node.title = season.title || '';
+                node.addEventListener('click', e => {
+                    e.stopImmediatePropagation();
+                    e.preventDefault();
+                    if (season.mid && season.id) {
+                        window.open(`//space.bilibili.com/${season.mid}/lists/${season.id}?type=season`);
+                    }
+                }, true);
+            });
+        };
+        this.updatePlaylistUI();
+        switchVideo(() => this.updatePlaylistUI?.());
     }
 
     /** hook合集切p回调 */
     protected callAppointPart = (p: number, state: Record<'aid' | 'cid', number>) => {
         if (this.destroy) return Reflect.deleteProperty(window, 'callAppointPart');
+        this.aid = state.aid;
+        this.updatePlaylistUI?.();
         const vue = document.querySelector<any>("#app")?.__vue__;
         if (vue) {
+            const targetP = Number(p) || 1;
+            const sameAid = Number(vue.$store.state.aid) === Number(state.aid);
+            vue.setP(targetP);
+            if (sameAid) {
+                const pParam = targetP > 1 ? `/?p=${targetP}` : '';
+                const targetUrl = `/video/av${state.aid}${pParam}`;
+                const curUrl = location.pathname + location.search;
+                if (targetP === 1 && curUrl === `/video/av${state.aid}/?p=1`) {
+                    history.replaceState(history.state, '', targetUrl);
+                } else if (curUrl !== targetUrl && curUrl !== `/video/av${state.aid}/${pParam ? `?p=${targetP}` : ''}`) {
+                    history.pushState(history.state, '', targetUrl);
+                }
+                return;
+            }
             // 评论和标签通过修改组件aid刷新
             vue.$store.state.aid = state.aid;
             // 简介, 标题, 视频统计
             apiViewDetail(state.aid)
                 .then(d => {
                     vue.setVideoData(d.View);
+                    vue.pages = d.View.pages || [];
+                    vue.setP(targetP);
                     // 下方视频推荐
                     document.querySelector<any>('#recommend_report')?.__vue__.init(d.Related);
                     // 标签
@@ -502,7 +570,7 @@ export class PageAV extends Page {
                 })
                 .finally(() => {
                     // 切换合集视频时保留p参数，避免刷新后分P信息丢失
-                    const pParam = p && p > 1 ? `/?p=${p}` : '';
+                    const pParam = targetP > 1 ? `/?p=${targetP}` : '';
                     history.pushState(history.state, '', `/video/av${state.aid}${pParam}`);
                 });
         }

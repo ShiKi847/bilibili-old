@@ -121,9 +121,13 @@ class Player {
     }
     /** 修改播放器启动参数 */
     protected modifyArgument(args: IArguments) {
-        while (this.modifyArgumentCallback.length) {
-            this.modifyArgumentCallback.shift()?.(args);
-        }
+        this.modifyArgumentCallback.forEach(d => {
+            try {
+                d(args);
+            } catch (e) {
+                debug.error(e);
+            }
+        });
     }
     protected initData: Record<string, any> = {};
     protected dataInited = false;

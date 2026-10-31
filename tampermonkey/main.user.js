@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bilibili 旧播放页
 // @namespace    MotooriKashin
-// @version      10.13.9-c3dd748427ccbbefce8d3423714030e5ad97afd7
+// @version      10.13.10-c3dd748427ccbbefce8d3423714030e5ad97afd7
 // @description  恢复Bilibili旧版页面，为了那些念旧的人。
 // @author       MotooriKashin, wly5556, FMPeach
 // @homepage     https://github.com/FMPeach/Bilibili-Old
@@ -16771,6 +16771,27 @@ const MODULES = `
   var download = new Download();
 
   // src/core/bilibili-old.ts
+  var _aid = typeof window.aid === "string" && /^\\d+\$/.test(window.aid) ? Number(window.aid) : window.aid;
+  var _cid = typeof window.cid === "string" && /^\\d+\$/.test(window.cid) ? Number(window.cid) : window.cid;
+  try {
+    Object.defineProperty(window, "aid", {
+      configurable: true,
+      enumerable: true,
+      get: () => _aid,
+      set: (v) => {
+        _aid = typeof v === "string" && /^\\d+\$/.test(v) ? Number(v) : v;
+      }
+    });
+    Object.defineProperty(window, "cid", {
+      configurable: true,
+      enumerable: true,
+      get: () => _cid,
+      set: (v) => {
+        _cid = typeof v === "string" && /^\\d+\$/.test(v) ? Number(v) : v;
+      }
+    });
+  } catch (e) {
+  }
   var BLOD = new class {
     /** 路径拆分 */
     path = location.href.split("/");
@@ -32406,10 +32427,13 @@ const MODULES = `
     }
     /** 修改播放器启动参数 */
     modifyArgument(args) {
-      var _a3;
-      while (this.modifyArgumentCallback.length) {
-        (_a3 = this.modifyArgumentCallback.shift()) == null ? void 0 : _a3(args);
-      }
+      this.modifyArgumentCallback.forEach((d) => {
+        try {
+          d(args);
+        } catch (e) {
+          debug.error(e);
+        }
+      });
     }
     initData = {};
     dataInited = false;
@@ -41671,6 +41695,8 @@ const MODULES = `
     destroy = false;
     /** 合作UP主模式 */
     _isStaffMode = false;
+    /** 同步合集面板UI（切P重载播放器后需重新应用） */
+    updatePlaylistUI;
     like;
     webpackJsonp = true;
     keepInitialState = true;
@@ -41682,7 +41708,7 @@ const MODULES = `
       BLOD.aid = v;
     }
     constructor() {
-      var _a3;
+      var _a3, _b2, _c;
       super(av_default);
       this.rawInitialState = getInitialVideoState() || window.__INITIAL_STATE__;
       lockInitialState();
@@ -41699,7 +41725,7 @@ const MODULES = `
           this.aid = Number(this.rawInitialState.aid);
         }
       }
-      if (this.aid && (!this.rawInitialState || !this.rawInitialState.videoData)) {
+      if (this.aid && (!this.rawInitialState || !((_b2 = this.rawInitialState.videoData) == null ? void 0 : _b2.cid) || !Array.isArray((_c = this.rawInitialState.videoData) == null ? void 0 : _c.pages) || !this.rawInitialState.videoData.pages.length)) {
         this.detailPromise = apiViewDetail(Number(this.aid));
       }
       new Comment2();
@@ -41735,7 +41761,12 @@ const MODULES = `
       webpackHook(
         717,
         274,
-        (code) => code.replace("this.getAdData()", "this.getAdData").replace("ut.MenuConfig[e].name", "ut.MenuConfig[e].name,url:ut.MenuConfig[e].url,subUrl: ut.MenuConfig[e].sub[a].url")
+        (code) => code.replace("this.getAdData()", "this.getAdData").replace("ut.MenuConfig[e].name", "ut.MenuConfig[e].name,url:ut.MenuConfig[e].url,subUrl: ut.MenuConfig[e].sub[a].url").replace("t.pages.length>1&&t.setP(1)", "t.pages.length>1&&t.setP(Number(t.\$route.query.p||1))").replace("asyncData:function(t,e){var i=t.dispatch,a=(t.state,t.commit);", "asyncData:function(t,e){if(t&&t.store)return{then:function(t){return t(),{catch:function(){}}}};var i=t.dispatch,a=(t.state,t.commit);")
+      );
+      webpackHook(
+        717,
+        277,
+        (code) => code.replace("watch:{p:function(t){", "watch:{pages:function(){this.pages.forEach(function(t,e){return t.index=e}),this.col=this.calcCol(),this.needSpread?this.showingPages=this.calcShowingPageByP(this.p):this.showingPages=this.pages},\$route:function(){this.setP(Number(this.\$route.query.p||this.oldRoute()||1))},p:function(t){").replace("p:function(){return Number(this.\$route.query.p||this.oldRoute()||1)}", "p:function(){return Number(this.\$store.state.p||this.\$route.query.p||this.oldRoute()||1)}").replace("this.calcWidth(this.pages[this.p-1])", 'this.calcWidth(this.pages[this.p-1]||this.pages[0]||{index:0,part:""})').replace("changeVideo:function(t){", "changeVideo:function(t){if(this._isDestroyed||!this.pages||!this.pages[t])return;").replace("window.GrayManager&&window.GrayManager.reload(e)", '(window.player&&window.player.directiveDispatcher&&window.player.getPlaylist&&window.player.getPlaylist()?window.player.directiveDispatcher({_id:1,_origin:"webpage",_directive:232004,data:{aid:Number(this.pages[t].aid||this.aid),cid:Number(this.pages[t].cid)}}):window.GrayManager&&window.GrayManager.reload(e))')
       );
     }
     /** 修复分区列表 */
@@ -41867,7 +41898,7 @@ const MODULES = `
         }
         const matchAid = (st) => {
           var _a3, _b2;
-          if (!st || !st.videoData) return false;
+          if (!st || !st.videoData || !st.videoData.cid || !Array.isArray(st.videoData.pages) || !st.videoData.pages.length) return false;
           if (st.aid == this.aid || ((_a3 = st.videoData) == null ? void 0 : _a3.aid) == this.aid) return true;
           if (this.aid && (String(st.aid) === String(this.aid) || String((_b2 = st.videoData) == null ? void 0 : _b2.aid) === String(this.aid))) return true;
           return false;
@@ -42006,6 +42037,9 @@ const MODULES = `
     }
     /** 合集（使用播单模拟） */
     ugcSection(season, owner) {
+      SessionStorage.setItem("player_last_filter_tab_info", 3);
+      toview_default.name = season.title;
+      toview_default.owner = owner;
       toview_default.cover = season.cover;
       toview_default.count = season.ep_count;
       toview_default.id = season.id;
@@ -42017,7 +42051,7 @@ const MODULES = `
       toview_default.stat.reply = season.stat.reply;
       toview_default.stat.share = season.stat.share;
       toview_default.stat.view = season.stat.view;
-      toview_default.pid = -1;
+      toview_default.pid = season.id || 1;
       toview_default.list = season.sections.reduce((s, d) => {
         d.episodes.forEach((d2) => {
           const pages = Array.isArray(d2.pages) && d2.pages.length > 0 ? d2.pages : [d2.page];
@@ -42046,29 +42080,83 @@ const MODULES = `
         });
         return s;
       }, []);
+      videoInfo.toview(toview_default);
       player.addModifyArgument((args) => {
         if (this.destroy) return;
+        SessionStorage.setItem("player_last_filter_tab_info", 3);
         const obj = urlObj(\`?\${args[2]}\`);
         obj.playlist = encodeURIComponent(JSON.stringify({ code: 0, data: toview_default, message: "0", ttl: 1 }));
         args[2] = objUrl("", obj);
       });
-      propertyHook(window, "callAppointPart", this.callAppointPart);
-      addCss(".bilibili-player .bilibili-player-auxiliary-area .bilibili-player-playlist .bilibili-player-playlist-playlist {height: calc(100% - 45px);}.bilibili-player-playlist-nav-title,.bilibili-player-playlist-nav-ownername{display: none;}#v_multipage{display:none!important;}");
+      Reflect.defineProperty(window, "callAppointPart", {
+        configurable: true,
+        get: () => this.callAppointPart,
+        set: () => true
+      });
+      addCss(".bilibili-player .bilibili-player-auxiliary-area .bilibili-player-playlist .bilibili-player-playlist-playlist {height: calc(100% - 73px);}.bilibili-player-playlist-nav-ownername{display: none;}.bilibili-player-playlist-nav-title{white-space: nowrap;}");
+      this.updatePlaylistUI = () => {
+        if (this.destroy) return;
+        poll(() => {
+          const node = document.querySelector(".bilibili-player-filter-btn-playlist span");
+          return node && node.textContent !== "合集" ? node : null;
+        }, (node) => {
+          if (this.destroy) return;
+          node.textContent = "合集";
+        });
+        poll(() => {
+          const node = document.querySelector(".bilibili-player-playlist-nav-title");
+          return node && !node.dataset.seasonBound ? node : null;
+        }, (node) => {
+          if (this.destroy) return;
+          node.dataset.seasonBound = "1";
+          node.title = season.title || "";
+          node.addEventListener("click", (e) => {
+            e.stopImmediatePropagation();
+            e.preventDefault();
+            if (season.mid && season.id) {
+              window.open(\`//space.bilibili.com/\${season.mid}/lists/\${season.id}?type=season\`);
+            }
+          }, true);
+        });
+      };
+      this.updatePlaylistUI();
+      switchVideo(() => {
+        var _a3;
+        return (_a3 = this.updatePlaylistUI) == null ? void 0 : _a3.call(this);
+      });
     }
     /** hook合集切p回调 */
     callAppointPart = (p, state) => {
-      var _a3;
+      var _a3, _b2;
       if (this.destroy) return Reflect.deleteProperty(window, "callAppointPart");
-      const vue = (_a3 = document.querySelector("#app")) == null ? void 0 : _a3.__vue__;
+      this.aid = state.aid;
+      (_a3 = this.updatePlaylistUI) == null ? void 0 : _a3.call(this);
+      const vue = (_b2 = document.querySelector("#app")) == null ? void 0 : _b2.__vue__;
       if (vue) {
+        const targetP = Number(p) || 1;
+        const sameAid = Number(vue.\$store.state.aid) === Number(state.aid);
+        vue.setP(targetP);
+        if (sameAid) {
+          const pParam = targetP > 1 ? \`/?p=\${targetP}\` : "";
+          const targetUrl = \`/video/av\${state.aid}\${pParam}\`;
+          const curUrl = location.pathname + location.search;
+          if (targetP === 1 && curUrl === \`/video/av\${state.aid}/?p=1\`) {
+            history.replaceState(history.state, "", targetUrl);
+          } else if (curUrl !== targetUrl && curUrl !== \`/video/av\${state.aid}/\${pParam ? \`?p=\${targetP}\` : ""}\`) {
+            history.pushState(history.state, "", targetUrl);
+          }
+          return;
+        }
         vue.\$store.state.aid = state.aid;
         apiViewDetail(state.aid).then((d) => {
-          var _a4, _b2, _c, _d;
+          var _a4, _b3, _c, _d;
           vue.setVideoData(d.View);
+          vue.pages = d.View.pages || [];
+          vue.setP(targetP);
           (_a4 = document.querySelector("#recommend_report")) == null ? void 0 : _a4.__vue__.init(d.Related);
           document.querySelector("#v_tag").__vue__.\$data.tags = d.Tags;
           videoInfo.aidDatail(d.View);
-          if (((_b2 = user.userStatus) == null ? void 0 : _b2.staff) && d.View.staff) {
+          if (((_b3 = user.userStatus) == null ? void 0 : _b3.staff) && d.View.staff) {
             this.staff(d.View.staff);
           } else {
             const newMid = (_c = d.Card.card) == null ? void 0 : _c.mid;
@@ -42084,7 +42172,7 @@ const MODULES = `
         }).catch((e) => {
           toast.error("更新视频信息失败", e)();
         }).finally(() => {
-          const pParam = p && p > 1 ? \`/?p=\${p}\` : "";
+          const pParam = targetP > 1 ? \`/?p=\${targetP}\` : "";
           history.pushState(history.state, "", \`/video/av\${state.aid}\${pParam}\`);
         });
       }
@@ -42338,6 +42426,7 @@ const MODULES = `
       BLOD.aid = v;
     }
     constructor() {
+      var _a3, _b2;
       super(list_default);
       this.rawInitialState = getInitialVideoState() || window.__INITIAL_STATE__;
       lockInitialState();
@@ -42368,7 +42457,7 @@ const MODULES = `
         this.parseListInfo();
         this.extractAid();
       }
-      if (this.aid && (!this.rawInitialState || !this.rawInitialState.videoData)) {
+      if (this.aid && (!this.rawInitialState || !((_a3 = this.rawInitialState.videoData) == null ? void 0 : _a3.cid) || !Array.isArray((_b2 = this.rawInitialState.videoData) == null ? void 0 : _b2.pages) || !this.rawInitialState.videoData.pages.length)) {
         this.detailPromise = apiViewDetail(Number(this.aid));
       }
       this.like = new Like();
@@ -42466,9 +42555,11 @@ const MODULES = `
      * 4. 替换DOM（等待数据获取完成，确保播放器启动时数据已就绪）
      */
     async initList() {
+      SessionStorage.setItem("player_last_filter_tab_info", 3);
       player.addModifyArgument((args) => {
         if (this.destroy) return;
         if (!this.listDataReady) return;
+        SessionStorage.setItem("player_last_filter_tab_info", 3);
         console.log("player.addModifyArgument: before updateListUrl", {
           urlUpdated: this.urlUpdated,
           isFromList: this.isFromList,
@@ -42490,7 +42581,11 @@ const MODULES = `
         obj.playlist = encodeURIComponent(JSON.stringify({ code: 0, data: toview_default, message: "0", ttl: 1 }));
         args[2] = objUrl("", obj);
       });
-      propertyHook(window, "callAppointPart", this.callAppointPart);
+      Reflect.defineProperty(window, "callAppointPart", {
+        configurable: true,
+        get: () => this.callAppointPart,
+        set: () => true
+      });
       try {
         await this.fetchListData();
       } catch (e) {
@@ -42508,7 +42603,7 @@ const MODULES = `
       }
       this.updateDom();
       addCss(
-        ".bilibili-player .bilibili-player-auxiliary-area .bilibili-player-playlist .bilibili-player-playlist-playlist {height: calc(100% - 45px);}.bilibili-player-playlist-nav-title,.bilibili-player-playlist-nav-ownername{display: none;}#v_multipage{display:none!important;}",
+        ".bilibili-player .bilibili-player-auxiliary-area .bilibili-player-playlist .bilibili-player-playlist-playlist {height: calc(100% - 45px);}.bilibili-player-playlist-nav-title,.bilibili-player-playlist-nav-ownername{display: none;}",
         "list-playlist"
       );
     }
@@ -42665,12 +42760,34 @@ const MODULES = `
     callAppointPart = (p, state) => {
       var _a3;
       if (this.destroy) return Reflect.deleteProperty(window, "callAppointPart");
+      this.aid = state.aid;
       const vue = (_a3 = document.querySelector("#app")) == null ? void 0 : _a3.__vue__;
       if (vue) {
+        const targetP = Number(p) || 1;
+        const sameAid = Number(vue.\$store.state.aid) === Number(state.aid);
+        vue.setP(targetP);
+        if (sameAid) {
+          if (this.isFromList) {
+            this.route.p = targetP > 1 ? String(targetP) : "1";
+            this.updateListUrl(state.aid);
+          } else {
+            const pParam = targetP > 1 ? \`/?p=\${targetP}\` : "";
+            const targetUrl = \`/video/av\${state.aid}\${pParam}\`;
+            const curUrl = location.pathname + location.search;
+            if (targetP === 1 && curUrl === \`/video/av\${state.aid}/?p=1\`) {
+              history.replaceState(history.state, "", targetUrl);
+            } else if (curUrl !== targetUrl && curUrl !== \`/video/av\${state.aid}/\${pParam ? \`?p=\${targetP}\` : ""}\`) {
+              history.pushState(history.state, "", targetUrl);
+            }
+          }
+          return;
+        }
         vue.\$store.state.aid = state.aid;
         apiViewDetail(state.aid).then((d) => {
           var _a4, _b2, _c, _d, _e;
           vue.setVideoData(d.View);
+          vue.pages = d.View.pages || [];
+          vue.setP(targetP);
           (_b2 = (_a4 = document.querySelector("#recommend_report")) == null ? void 0 : _a4.__vue__) == null ? void 0 : _b2.init(d.Related);
           try {
             document.querySelector("#v_tag").__vue__.\$data.tags = d.Tags;
@@ -42695,10 +42812,10 @@ const MODULES = `
           toast.error("更新视频信息失败", e)();
         }).finally(() => {
           if (this.isFromList) {
-            this.route.p = p > 1 ? String(p) : "1";
+            this.route.p = targetP > 1 ? String(targetP) : "1";
             this.updateListUrl(state.aid);
           } else {
-            const pParam = p && p > 1 ? \`/?p=\${p}\` : "";
+            const pParam = targetP > 1 ? \`/?p=\${targetP}\` : "";
             history.pushState(history.state, "", \`/video/av\${state.aid}\${pParam}\`);
           }
         });
@@ -42775,7 +42892,12 @@ const MODULES = `
       webpackHook(
         717,
         274,
-        (code) => code.replace("this.getAdData()", "this.getAdData").replace("ut.MenuConfig[e].name", "ut.MenuConfig[e].name,url:ut.MenuConfig[e].url,subUrl: ut.MenuConfig[e].sub[a].url")
+        (code) => code.replace("this.getAdData()", "this.getAdData").replace("ut.MenuConfig[e].name", "ut.MenuConfig[e].name,url:ut.MenuConfig[e].url,subUrl: ut.MenuConfig[e].sub[a].url").replace("t.pages.length>1&&t.setP(1)", "t.pages.length>1&&t.setP(Number(t.\$route.query.p||1))").replace("asyncData:function(t,e){var i=t.dispatch,a=(t.state,t.commit);", "asyncData:function(t,e){if(t&&t.store)return{then:function(t){return t(),{catch:function(){}}}};var i=t.dispatch,a=(t.state,t.commit);")
+      );
+      webpackHook(
+        717,
+        277,
+        (code) => code.replace("watch:{p:function(t){", "watch:{pages:function(){this.pages.forEach(function(t,e){return t.index=e}),this.col=this.calcCol(),this.needSpread?this.showingPages=this.calcShowingPageByP(this.p):this.showingPages=this.pages},\$route:function(){this.setP(Number(this.\$route.query.p||this.oldRoute()||1))},p:function(t){").replace("p:function(){return Number(this.\$route.query.p||this.oldRoute()||1)}", "p:function(){return Number(this.\$store.state.p||this.\$route.query.p||this.oldRoute()||1)}").replace("this.calcWidth(this.pages[this.p-1])", 'this.calcWidth(this.pages[this.p-1]||this.pages[0]||{index:0,part:""})').replace("changeVideo:function(t){", "changeVideo:function(t){if(this._isDestroyed||!this.pages||!this.pages[t])return;").replace("window.GrayManager&&window.GrayManager.reload(e)", '(window.player&&window.player.directiveDispatcher&&window.player.getPlaylist&&window.player.getPlaylist()?window.player.directiveDispatcher({_id:1,_origin:"webpage",_directive:232004,data:{aid:Number(this.pages[t].aid||this.aid),cid:Number(this.pages[t].cid)}}):window.GrayManager&&window.GrayManager.reload(e))')
       );
     }
     /** 修复分区列表 */
@@ -42896,7 +43018,7 @@ const MODULES = `
         }
         const matchAid = (st) => {
           var _a3, _b2;
-          if (!st || !st.videoData) return false;
+          if (!st || !st.videoData || !st.videoData.cid || !Array.isArray(st.videoData.pages) || !st.videoData.pages.length) return false;
           if (st.aid == this.aid || ((_a3 = st.videoData) == null ? void 0 : _a3.aid) == this.aid) return true;
           if (this.aid && (String(st.aid) === String(this.aid) || String((_b2 = st.videoData) == null ? void 0 : _b2.aid) === String(this.aid))) return true;
           return false;
@@ -45761,18 +45883,23 @@ const MODULES = `
   } catch (e) {
   }
   function getInitialVideoState() {
-    var _a3, _b2, _c, _d, _e, _f;
-    if (initialVideoState == null ? void 0 : initialVideoState.videoData) return initialVideoState;
+    var _a3, _b2, _c, _d, _e, _f, _g, _h;
+    if (((_a3 = initialVideoState == null ? void 0 : initialVideoState.videoData) == null ? void 0 : _a3.cid) && Array.isArray(initialVideoState.videoData.pages) && initialVideoState.videoData.pages.length > 0) {
+      return initialVideoState;
+    }
     try {
       const appEl = document.getElementById("app") || document.getElementById("video-page-app");
-      const storeState = (_b2 = (_a3 = appEl == null ? void 0 : appEl.__vue__) == null ? void 0 : _a3.\$store) == null ? void 0 : _b2.state;
-      if (storeState && (((_c = storeState.videoData) == null ? void 0 : _c.aid) || storeState.aid)) {
+      const storeState = (_c = (_b2 = appEl == null ? void 0 : appEl.__vue__) == null ? void 0 : _b2.\$store) == null ? void 0 : _c.state;
+      if (storeState && (((_d = storeState.videoData) == null ? void 0 : _d.aid) || storeState.aid)) {
+        const hasFullVideoData = Boolean(
+          ((_e = storeState.videoData) == null ? void 0 : _e.cid) && Array.isArray(storeState.videoData.pages) && storeState.videoData.pages.length > 0
+        );
         initialVideoState = {
           ...storeState,
-          aid: storeState.aid || ((_d = storeState.videoData) == null ? void 0 : _d.aid),
-          bvid: storeState.bvid || ((_e = storeState.videoData) == null ? void 0 : _e.bvid),
-          cid: storeState.cid || ((_f = storeState.videoData) == null ? void 0 : _f.cid),
-          videoData: storeState.videoData ? { ...storeState.videoData } : void 0,
+          aid: storeState.aid || ((_f = storeState.videoData) == null ? void 0 : _f.aid),
+          bvid: storeState.bvid || ((_g = storeState.videoData) == null ? void 0 : _g.bvid),
+          cid: storeState.cid || ((_h = storeState.videoData) == null ? void 0 : _h.cid),
+          videoData: hasFullVideoData ? { ...storeState.videoData } : void 0,
           upData: storeState.upData ? { ...storeState.upData } : void 0,
           tags: Array.isArray(storeState.tags) ? [...storeState.tags] : void 0,
           related: Array.isArray(storeState.related) ? [...storeState.related] : void 0
