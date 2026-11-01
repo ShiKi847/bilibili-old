@@ -252,12 +252,30 @@ export class Header {
             }
         }
     }
+    /** Header 单例引用 */
+    static instance?: Header;
+    /** 在 DOM 重构（如 PageSpace.rewrite）后重新挂载顶栏 */
+    static remount() {
+        if (Header.instance) {
+            Header.instance.resetAndMount();
+        } else {
+            new Header();
+        }
+    }
+    /** 重置状态并重新在全新 DOM 上完整挂载与拉取脚本 */
+    public resetAndMount() {
+        this.oldHeadLoaded = false;
+        this.isScriptLoading = false;
+        this.oldHeader.innerHTML = '';
+        this.mountOldHeader();
+    }
     /** 迷你顶栏 */
     protected miniHeader() {
         this.oldHeader.classList.remove('has-menu');
     }
     /** 是否mini顶栏 */
     protected static isMiniHead(d?: HTMLElement) {
+        if (location.host === "space.bilibili.com") return true;
         // 各种分区主页一律使用mini顶栏
         if (/\/v\/(douga|music|dance|game|knowledge|tech|life|kichiku|fashion|information|ent|cinephile|car|sports|animal)\//.test(location.href)) return true;
         // 公开课使用mini顶栏
@@ -271,6 +289,7 @@ export class Header {
         ) ? false : true;
     }
     constructor() {
+        Header.instance = this;
         if (isDynamicNavPage()) {
             this.injectDynamicNavFix();
             return;
@@ -476,6 +495,7 @@ export class Header {
                 || document.querySelector<HTMLElement>('#bili-header-container')
                 || document.querySelector<HTMLElement>('#home_nav')
                 || document.querySelector<HTMLElement>('.bili-header__bar')
+                || (location.host === "space.bilibili.com" ? document.querySelector<HTMLElement>('.bili-header') : null)
         }, d => {
             Header.isMiniHead(d) && this.miniHeader();
             this.loadOldHeader(d);
@@ -484,34 +504,84 @@ export class Header {
         poll(() => document.querySelector<HTMLElement>('.z_top_container'), d => {
             this.loadOldHeader(d);
             document.querySelector<HTMLElement>('.header')!.style.display = 'none';
-        })
+        });
         // poll(() => document.querySelector<HTMLElement>('.international-footer'), d => this.loadOldFooter(d));
         // poll(() => document.querySelector<HTMLElement>('#biliMainFooter'), d => this.loadOldFooter(d));
     }
     /** 已加载旧版顶栏 */
     protected oldHeadLoaded = false;
+    /** 脚本加载中标志，避免并发重入重复拉取执行 header.js */
+    protected isScriptLoading = false;
     /** 旧版顶栏节点 */
     protected oldHeader = document.createElement('div');
-    /** 加载旧版顶栏 */
+    /** 加载旧版顶栏（隐藏旧目标容器并挂载） */
     protected loadOldHeader(target?: HTMLElement) {
         if (target) {
-            if (target.className === 'bili-header__bar') {
+            if ((target.className === 'bili-header__bar' || target.classList.contains('bili-header__bar')) && location.host !== "space.bilibili.com") {
                 addCss('.bili-header.large-header,.header-channel,.z-top-container.has-menu[type="all"] {display: none;}');
             }
-            document.body.classList.remove('header-v3');
+            document.body?.classList.remove('header-v3');
             target.style.display = 'none';
             target.hidden = true;
-            // target.attachShadow({ mode: 'closed' });
         }
-        if (this.oldHeadLoaded) return;
+        this.mountOldHeader(target);
+    }
+    /** 核心挂载逻辑（支持重入与 DOM 重建后恢复） */
+    public mountOldHeader(target?: HTMLElement) {
+        // 保证基础类名 z-top-container 始终存在，直接通过 Header.isMiniHead(target) 判定，避免 target 为空时误加 has-menu
+        this.oldHeader.classList.add('z-top-container');
+        if (Header.isMiniHead(target)) {
+            this.miniHeader();
+        } else {
+            this.oldHeader.classList.add('has-menu');
+        }
+
+        addCss('#internationalHeader,#biliMainHeader,#bili-header-container{display: none !important;}', 'old-header-hide-base');
+        if (location.host === "space.bilibili.com") {
+            addCss('.bili-header { display: none !important; } .z-top-container { position: relative; z-index: 1000; }', 'old-space-header-fix');
+        }
+
+        const attachToDom = () => {
+            if (document.body && !document.body.contains(this.oldHeader)) {
+                document.body.insertBefore(this.oldHeader, document.body.firstChild);
+            }
+        };
+
+        if (document.body) {
+            attachToDom();
+        } else {
+            poll(() => document.body, attachToDom);
+        }
+
+        // 若处于脚本加载中，或已挂载且组件子节点已渲染就绪，跳过重复加载外部脚本
+        if (this.isScriptLoading || (this.oldHeadLoaded && document.body && document.body.contains(this.oldHeader) && this.oldHeader.children.length > 0)) {
+            if (!this.isScriptLoading) {
+                Header.styleFix();
+                if (!Header.isMiniHead(target)) {
+                    Header.primaryMenu();
+                    Header.banner();
+                }
+            }
+            return;
+        }
+
         this.oldHeadLoaded = true;
-        addCss('#internationalHeader,#biliMainHeader,#bili-header-container{display: none;}');
-        document.body.insertBefore(this.oldHeader, document.body.firstChild);
+        this.isScriptLoading = true;
+
         ((<any>window).jQuery ? Promise.resolve() : loadScript("//static.hdslb.com/js/jquery.min.js"))
             .then(() => loadScript("//s1.hdslb.com/bfs/seed/jinkela/header/header.js"))
-            .then(() => { Header.styleFix(); });
-        Header.primaryMenu();
-        Header.banner();
+            .then(() => {
+                this.isScriptLoading = false;
+                Header.styleFix();
+            })
+            .catch(() => {
+                this.isScriptLoading = false;
+            });
+
+        if (!Header.isMiniHead(target)) {
+            Header.primaryMenu();
+            Header.banner();
+        }
     }
     protected loadOldFooter(target?: HTMLElement) {
         addElement('div', { class: "footer bili-footer report-wrap-module" }, document.body, undefined, undefined, target);

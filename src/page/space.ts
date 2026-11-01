@@ -37,7 +37,7 @@ export class PageSpace extends Page {
         user.addCallback(status => {
             if (status.space) {
                 // 重写为旧版个人空间页
-                this.rewrite();
+                this.rewrite(status.header);
             } else {
                 // 在新版页面基础上应用各项修复
                 status.album && this.album();
@@ -48,11 +48,12 @@ export class PageSpace extends Page {
     }
 
     /** 重写为旧版个人空间页 */
-    protected rewrite() {
+    protected rewrite(hasHeader?: boolean) {
         urlCleaner.updateLocation(location.href);
-        Header.primaryMenu();
-        Header.banner();
         this.updateDom();
+        if (hasHeader) {
+            Header.remount();
+        }
     }
 
     /** 修复限制访问up空间 */
