@@ -13,3 +13,8 @@
   1. `src/page/header.ts`：在 `Header.isMiniHead` 中对 `space.bilibili.com` 明确返回 `true`；在 `mountOldHeader` 中对 `primaryMenu()` 与 `banner()` 的两处调用增加 `!Header.isMiniHead(target)` 守卫；在 `old-space-header-fix` 样式中补充 `.z-top-container { position: relative; z-index: 1000; }`。
   2. `src/page/space.ts`：在 `PageSpace.rewrite` 中移除 `else` 分支中的 `Header.primaryMenu(); Header.banner();`。
   3. 执行 `npm run tampermonkey; npm run chrome` 构建通过，Reviewer (Gemini 4 Argon) 审查通过 (Approved)。
+
+## [2026-11-01 16:04 +09:00] 发布 v10.13.11 并合并推送至远程仓库
+- **提交信息**：`v10.13.11: 修复个人主页(space)旧版迷你顶栏显示与DOM重构挂载`（commit `f0041334`）。
+- **合并与推送**：已合并至 `master`（merge commit `1fef26ce`），并全量推送至 `origin/dev-update` 与 `origin/master`。工作区已恢复 Clean 状态。
+
