@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bilibili 旧播放页
 // @namespace    MotooriKashin
-// @version      10.13.10-c3dd748427ccbbefce8d3423714030e5ad97afd7
+// @version      10.13.11-c3dd748427ccbbefce8d3423714030e5ad97afd7
 // @description  恢复Bilibili旧版页面，为了那些念旧的人。
 // @author       MotooriKashin, wly5556, FMPeach
 // @homepage     https://github.com/FMPeach/Bilibili-Old
@@ -26866,17 +26866,36 @@ const MODULES = `
         }
       }
     }
+    /** Header 单例引用 */
+    static instance;
+    /** 在 DOM 重构（如 PageSpace.rewrite）后重新挂载顶栏 */
+    static remount() {
+      if (_Header.instance) {
+        _Header.instance.resetAndMount();
+      } else {
+        new _Header();
+      }
+    }
+    /** 重置状态并重新在全新 DOM 上完整挂载与拉取脚本 */
+    resetAndMount() {
+      this.oldHeadLoaded = false;
+      this.isScriptLoading = false;
+      this.oldHeader.innerHTML = "";
+      this.mountOldHeader();
+    }
     /** 迷你顶栏 */
     miniHeader() {
       this.oldHeader.classList.remove("has-menu");
     }
     /** 是否mini顶栏 */
     static isMiniHead(d) {
+      if (location.host === "space.bilibili.com") return true;
       if (/\\/v\\/(douga|music|dance|game|knowledge|tech|life|kichiku|fashion|information|ent|cinephile|car|sports|animal)\\//.test(location.href)) return true;
       if (/\\/mooc\\//.test(location.href)) return true;
       return location.href.includes("blackboard/topic_list") || location.href.includes("blackboard/x/act_list") || document.querySelector(".large-header") || document.querySelector(".bili-banner") || (d == null ? void 0 : d.getAttribute("type")) == "all" ? false : true;
     }
     constructor() {
+      _Header.instance = this;
       if (isDynamicNavPage()) {
         this.injectDynamicNavFix();
         return;
@@ -27049,7 +27068,7 @@ const MODULES = `
     }
     hookHeadV2() {
       poll(() => {
-        return document.querySelector("#internationalHeader") || document.querySelector("#biliMainHeader") || document.querySelector("#bili-header-container") || document.querySelector("#home_nav") || document.querySelector(".bili-header__bar");
+        return document.querySelector("#internationalHeader") || document.querySelector("#biliMainHeader") || document.querySelector("#bili-header-container") || document.querySelector("#home_nav") || document.querySelector(".bili-header__bar") || (location.host === "space.bilibili.com" ? document.querySelector(".bili-header") : null);
       }, (d) => {
         _Header.isMiniHead(d) && this.miniHeader();
         this.loadOldHeader(d);
@@ -27061,27 +27080,67 @@ const MODULES = `
     }
     /** 已加载旧版顶栏 */
     oldHeadLoaded = false;
+    /** 脚本加载中标志，避免并发重入重复拉取执行 header.js */
+    isScriptLoading = false;
     /** 旧版顶栏节点 */
     oldHeader = document.createElement("div");
-    /** 加载旧版顶栏 */
+    /** 加载旧版顶栏（隐藏旧目标容器并挂载） */
     loadOldHeader(target) {
+      var _a3;
       if (target) {
-        if (target.className === "bili-header__bar") {
+        if ((target.className === "bili-header__bar" || target.classList.contains("bili-header__bar")) && location.host !== "space.bilibili.com") {
           addCss('.bili-header.large-header,.header-channel,.z-top-container.has-menu[type="all"] {display: none;}');
         }
-        document.body.classList.remove("header-v3");
+        (_a3 = document.body) == null ? void 0 : _a3.classList.remove("header-v3");
         target.style.display = "none";
         target.hidden = true;
       }
-      if (this.oldHeadLoaded) return;
+      this.mountOldHeader(target);
+    }
+    /** 核心挂载逻辑（支持重入与 DOM 重建后恢复） */
+    mountOldHeader(target) {
+      this.oldHeader.classList.add("z-top-container");
+      if (_Header.isMiniHead(target)) {
+        this.miniHeader();
+      } else {
+        this.oldHeader.classList.add("has-menu");
+      }
+      addCss("#internationalHeader,#biliMainHeader,#bili-header-container{display: none !important;}", "old-header-hide-base");
+      if (location.host === "space.bilibili.com") {
+        addCss(".bili-header { display: none !important; } .z-top-container { position: relative; z-index: 1000; }", "old-space-header-fix");
+      }
+      const attachToDom = () => {
+        if (document.body && !document.body.contains(this.oldHeader)) {
+          document.body.insertBefore(this.oldHeader, document.body.firstChild);
+        }
+      };
+      if (document.body) {
+        attachToDom();
+      } else {
+        poll(() => document.body, attachToDom);
+      }
+      if (this.isScriptLoading || this.oldHeadLoaded && document.body && document.body.contains(this.oldHeader) && this.oldHeader.children.length > 0) {
+        if (!this.isScriptLoading) {
+          _Header.styleFix();
+          if (!_Header.isMiniHead(target)) {
+            _Header.primaryMenu();
+            _Header.banner();
+          }
+        }
+        return;
+      }
       this.oldHeadLoaded = true;
-      addCss("#internationalHeader,#biliMainHeader,#bili-header-container{display: none;}");
-      document.body.insertBefore(this.oldHeader, document.body.firstChild);
+      this.isScriptLoading = true;
       (window.jQuery ? Promise.resolve() : loadScript("//static.hdslb.com/js/jquery.min.js")).then(() => loadScript("//s1.hdslb.com/bfs/seed/jinkela/header/header.js")).then(() => {
+        this.isScriptLoading = false;
         _Header.styleFix();
+      }).catch(() => {
+        this.isScriptLoading = false;
       });
-      _Header.primaryMenu();
-      _Header.banner();
+      if (!_Header.isMiniHead(target)) {
+        _Header.primaryMenu();
+        _Header.banner();
+      }
     }
     loadOldFooter(target) {
       addElement("div", { class: "footer bili-footer report-wrap-module" }, document.body, void 0, void 0, target);
@@ -27886,7 +27945,7 @@ const MODULES = `
       this.midInfo();
       user.addCallback((status) => {
         if (status.space) {
-          this.rewrite();
+          this.rewrite(status.header);
         } else {
           status.album && this.album();
           status.jointime && this.jointime();
@@ -27895,11 +27954,12 @@ const MODULES = `
       });
     }
     /** 重写为旧版个人空间页 */
-    rewrite() {
+    rewrite(hasHeader) {
       urlCleaner.updateLocation(location.href);
-      Header.primaryMenu();
-      Header.banner();
       this.updateDom();
+      if (hasHeader) {
+        Header.remount();
+      }
     }
     /** 修复限制访问up空间 */
     midInfo() {
