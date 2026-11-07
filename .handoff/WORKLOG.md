@@ -18,3 +18,11 @@
 - **提交信息**：`v10.13.11: 修复个人主页(space)旧版迷你顶栏显示与DOM重构挂载`（commit `f0041334`）。
 - **合并与推送**：已合并至 `master`（merge commit `1fef26ce`），并全量推送至 `origin/dev-update` 与 `origin/master`。工作区已恢复 Clean 状态。
 
+## [2026-11-07 16:49 +09:00] 个人空间 (space.bilibili.com) 恢复账户注册时间显示（方式 B）与全局三角色隔离规则加固 (v10.13.12)
+- **归档**：由主代理（Gemini 4 Argon）亲自编写并归档 `.handoff/v10.13.12/plan_space_jointime.md` 与 `.handoff/v10.13.12/review_space_jointime.md`（Round 1 驳回并拦截 3 项实质缺陷，Round 2 复审通过 Approved）。
+- **根因**：① 原 `account.bilibili.com/api/member/getCardByMid` 已 404 下线，且所有公开接口对他人 `regtime`/`jointime` 均已服务端脱敏置 0；② `src/page/space.ts` 中 `jointime()` 被写在 `status.space` 的 `else` 分支导致开启旧版个人空间时互斥跳过；③ 原选择器仅适配新版 `.section.user-info`，未适配旧版空间 `.user .info .meta .row`。
+- **改动**：
+  1. `src/io/urls.ts`：新增 `CARD` 与 `MEMBER_CALENDAR_EVENT` 接口常量。
+  2. `src/io/account-getcardbymid.ts`：实现 `getSpaceJointime(mid)`（本人空间调用创作中心日历接口获取精确到秒注册时间，支持 `fetch` 与 `GM.fetch` 容灾及内存缓存）与 `estimateJointimeByMid(mid)`（采用 Gemini 4 Argon 校准的 15 个真实 B 站历史发号里程碑锚点对 `< 7 亿` 老号分段线性插值估算年月，`>= 7 亿` 返回 `null`）。
+  3. `src/page/space.ts`：解除 `user.addCallback` 分支互斥；实现 `resolveMid()` 仅在根路径 `/` 回退登录 `uid`；在 `tryMount()` 中结合 `.item.uid` DOM 文本二次实锤校准 `mid`、状态锁防并发竞态、使用 `createElement` + `textContent` 安全组装 `.item.jointime` 并注入 `-209px -84px` 日历图标样式；执行 `npm run tampermonkey` 与 `npm run chrome` 零报错构建完成。
+  4. 全局配置 `C:\Users\shiki847\.gemini\config\GEMINI.md`：写入 Planner/Reviewer 与 Coder 的目录写权限物理隔离铁律，严禁 Coder 子代理触碰 `.handoff/` 下任何文档。

@@ -52,6 +52,8 @@ export class URLS {
     static readonly GLOBAL_OGV_PLAYURL = URLS.P_AUTO + URLS.D_API_GLOBAL + '/intl/gateway/v2/ogv/playurl';
     static readonly APP_PGC_PLAYURL = URLS.P_AUTO + URLS.D_API + '/pgc/player/api/playurl';
     static readonly ACCOUNT_GETCARDBYMID = URLS.P_AUTO + URLS.D_ACCOUNT + '/api/member/getCardByMid';
+    static readonly CARD = URLS.P_AUTO + URLS.D_API + '/x/web-interface/card';
+    static readonly MEMBER_CALENDAR_EVENT = URLS.P_HTTPS + URLS.D_MEMBER + '/x2/creative/h5/calendar/event?ts=0';
     static readonly LOGIN_APP_THIRD = URLS.P_AUTO + URLS.D_PASSPORT + '/login/app/third';
     static readonly PLAYER = URLS.P_AUTO + URLS.D_API + '/x/player/wbi/v2';
     static readonly PLAYURL_PROJ = URLS.P_AUTO + URLS.D_APP + '/v2/playurlproj';

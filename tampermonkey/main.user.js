@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bilibili 旧播放页
 // @namespace    MotooriKashin
-// @version      10.13.11-c3dd748427ccbbefce8d3423714030e5ad97afd7
+// @version      10.13.12-c3dd748427ccbbefce8d3423714030e5ad97afd7
 // @description  恢复Bilibili旧版页面，为了那些念旧的人。
 // @author       MotooriKashin, wly5556, FMPeach
 // @homepage     https://github.com/FMPeach/Bilibili-Old
@@ -6840,13 +6840,13 @@ const MODULES = `
       var nativeIsBuffer = Buffer2 ? Buffer2.isBuffer : void 0;
       var nativeKeys = overArg(Object.keys, Object);
       var DataView2 = getNative(root, "DataView");
-      var Map = getNative(root, "Map");
+      var Map2 = getNative(root, "Map");
       var Promise2 = getNative(root, "Promise");
       var Set2 = getNative(root, "Set");
       var WeakMap = getNative(root, "WeakMap");
       var nativeCreate = getNative(Object, "create");
       var dataViewCtorString = toSource(DataView2);
-      var mapCtorString = toSource(Map);
+      var mapCtorString = toSource(Map2);
       var promiseCtorString = toSource(Promise2);
       var setCtorString = toSource(Set2);
       var weakMapCtorString = toSource(WeakMap);
@@ -6952,7 +6952,7 @@ const MODULES = `
         this.size = 0;
         this.__data__ = {
           "hash": new Hash(),
-          "map": new (Map || ListCache)(),
+          "map": new (Map2 || ListCache)(),
           "string": new Hash()
         };
       }
@@ -7017,7 +7017,7 @@ const MODULES = `
         var data = this.__data__;
         if (data instanceof ListCache) {
           var pairs = data.__data__;
-          if (!Map || pairs.length < LARGE_ARRAY_SIZE - 1) {
+          if (!Map2 || pairs.length < LARGE_ARRAY_SIZE - 1) {
             pairs.push([key, value]);
             this.size = ++data.size;
             return this;
@@ -7297,7 +7297,7 @@ const MODULES = `
         });
       };
       var getTag = baseGetTag;
-      if (DataView2 && getTag(new DataView2(new ArrayBuffer(1))) != dataViewTag || Map && getTag(new Map()) != mapTag || Promise2 && getTag(Promise2.resolve()) != promiseTag || Set2 && getTag(new Set2()) != setTag || WeakMap && getTag(new WeakMap()) != weakMapTag) {
+      if (DataView2 && getTag(new DataView2(new ArrayBuffer(1))) != dataViewTag || Map2 && getTag(new Map2()) != mapTag || Promise2 && getTag(Promise2.resolve()) != promiseTag || Set2 && getTag(new Set2()) != setTag || WeakMap && getTag(new WeakMap()) != weakMapTag) {
         getTag = function(value) {
           var result = baseGetTag(value), Ctor = result == objectTag ? value.constructor : void 0, ctorString = Ctor ? toSource(Ctor) : "";
           if (ctorString) {
@@ -9935,6 +9935,8 @@ const MODULES = `
     static GLOBAL_OGV_PLAYURL = _URLS.P_AUTO + _URLS.D_API_GLOBAL + "/intl/gateway/v2/ogv/playurl";
     static APP_PGC_PLAYURL = _URLS.P_AUTO + _URLS.D_API + "/pgc/player/api/playurl";
     static ACCOUNT_GETCARDBYMID = _URLS.P_AUTO + _URLS.D_ACCOUNT + "/api/member/getCardByMid";
+    static CARD = _URLS.P_AUTO + _URLS.D_API + "/x/web-interface/card";
+    static MEMBER_CALENDAR_EVENT = _URLS.P_HTTPS + _URLS.D_MEMBER + "/x2/creative/h5/calendar/event?ts=0";
     static LOGIN_APP_THIRD = _URLS.P_AUTO + _URLS.D_PASSPORT + "/login/app/third";
     static PLAYER = _URLS.P_AUTO + _URLS.D_API + "/x/player/wbi/v2";
     static PLAYURL_PROJ = _URLS.P_AUTO + _URLS.D_APP + "/v2/playurlproj";
@@ -27371,10 +27373,105 @@ const MODULES = `
 
   // src/io/account-getcardbymid.ts
   init_tampermonkey();
-  async function accountGetCardByMid(mid) {
-    const response2 = await GM.fetch(objUrl(URLS.ACCOUNT_GETCARDBYMID, { mid }));
-    const json = await response2.json();
-    return jsonCheck(json).card;
+  var UID_ANCHORS = [
+    [1, 1245945600],
+    // 2009-06-26 (B站建站)
+    [78766, 1293811200],
+    // 2011-01-01
+    [259333, 1325347200],
+    // 2012-01-01
+    [51e4, 1342281600],
+    // 2012-07-15 (UID 510027 对应 2012-07)
+    [1123e3, 1356969600],
+    // 2013-01-01
+    [2954624, 1388505600],
+    // 2014-01-01
+    [7e6, 1420041600],
+    // 2015-01-01
+    [256e5, 1451577600],
+    // 2016-01-01
+    [7e7, 14832e5],
+    // 2017-01-01
+    [138e6, 1498838400],
+    // 2017-07-01
+    [25e7, 1514736e3],
+    // 2018-01-01
+    [39e7, 1546272e3],
+    // 2019-01-01
+    [5e8, 1577808e3],
+    // 2020-01-01
+    [6e8, 1590940800],
+    // 2020-06-01
+    [7e8, 1602691200]
+    // 2020-10-15 (散列大号改版临界点)
+  ];
+  function estimateJointimeByMid(mid) {
+    const targetMid = Math.floor(mid);
+    if (!targetMid || targetMid <= 0 || targetMid >= 7e8 || isNaN(targetMid)) {
+      return null;
+    }
+    for (let i2 = 0; i2 < UID_ANCHORS.length - 1; i2++) {
+      const [u0, t0] = UID_ANCHORS[i2];
+      const [u1, t1] = UID_ANCHORS[i2 + 1];
+      if (targetMid >= u0 && targetMid <= u1) {
+        const ratio = (targetMid - u0) / (u1 - u0);
+        const estTs = Math.round(t0 + ratio * (t1 - t0));
+        const cst = new Date((estTs + 8 * 3600) * 1e3);
+        const y = cst.getUTCFullYear();
+        const m = String(cst.getUTCMonth() + 1).padStart(2, "0");
+        return {
+          text: \`约 \${y}-\${m} (估算)\`,
+          isEstimated: true,
+          hint: "B站已隐藏他人精确注册时间，此为根据UID推算的大致注册年月"
+        };
+      }
+    }
+    return null;
+  }
+  var jointimeCache = /* @__PURE__ */ new Map();
+  function getSpaceJointime(mid) {
+    const targetMid = Math.floor(mid);
+    if (!targetMid || targetMid <= 0 || isNaN(targetMid)) {
+      return Promise.resolve(null);
+    }
+    if (jointimeCache.has(targetMid)) {
+      return jointimeCache.get(targetMid);
+    }
+    const promise = (async () => {
+      var _a3, _b2, _c, _d;
+      const currentUid = uid || Number(getCookies().DedeUserID);
+      const isOwnSpace = Boolean(currentUid && currentUid > 0 && targetMid === currentUid);
+      if (isOwnSpace) {
+        try {
+          let response2;
+          try {
+            response2 = await fetch(URLS.MEMBER_CALENDAR_EVENT, { credentials: "include" });
+            if (!response2.ok) {
+              throw new Error(\`fetch status \${response2.status}\`);
+            }
+          } catch {
+            response2 = await GM.fetch(URLS.MEMBER_CALENDAR_EVENT, { credentials: "include" });
+          }
+          if (response2.ok) {
+            const json = await response2.json();
+            if (json && json.code === 0) {
+              const jointime = Number((_d = (_a3 = json == null ? void 0 : json.data) == null ? void 0 : _a3.jointime) != null ? _d : (_c = (_b2 = json == null ? void 0 : json.data) == null ? void 0 : _b2.pfs) == null ? void 0 : _c.jointime);
+              if (jointime && jointime > 0) {
+                return {
+                  text: timeFormat(jointime * 1e3, true),
+                  isEstimated: false
+                };
+              }
+            }
+          }
+        } catch (e) {
+          debug.warn("获取本人注册时间失败，降级至UID推算", e);
+        }
+      }
+      return estimateJointimeByMid(targetMid);
+    })();
+    jointimeCache.set(targetMid, promise);
+    return promise;
   }
 
   // src/json/mid.json
@@ -27435,130 +27532,6 @@ const MODULES = `
     },
     message: "0",
     ttl: 1
-  };
-
-  // src/utils/vdomtool.ts
-  init_tampermonkey();
-  var VdomTool = class {
-    vdom;
-    scriptPromises = [];
-    get scriptsReady() {
-      if (!this.scriptPromises.length) return Promise.resolve();
-      return Promise.all(this.scriptPromises).then(() => {
-      });
-    }
-    constructor(html) {
-      if (typeof html === "string") {
-        this.vdom = normalizeVdom(htmlVnode(html));
-      } else {
-        this.vdom = html;
-      }
-    }
-    /** 生成 DocumentFragment（会过滤script标签，请稍后使用\`loadScript\`方法依次运行所有script） */
-    toFragment() {
-      this.scriptPromises = [];
-      const fragment = document.createDocumentFragment();
-      this.vdom.forEach((d) => {
-        fragment.appendChild(this.createElement(d));
-      });
-      return fragment;
-    }
-    /** 根据vdom生成真DOM（过滤script标签） */
-    createElement(element) {
-      var _a3;
-      if (element.tagName === "text") {
-        return document.createTextNode(element.text);
-      }
-      if (element.tagName === "svg") {
-        return this.createSVG(element);
-      }
-      const node = document.createElement(element.tagName);
-      element.props && Object.entries(element.props).forEach((d) => {
-        node.setAttribute(d[0], d[1]);
-      });
-      element.text && node.appendChild(document.createTextNode(element.text));
-      element.event && Object.entries(element.event).forEach((d) => {
-        node.addEventListener(...d);
-      });
-      if (element.tagName === "script") {
-        node.async = false;
-        if ((_a3 = element.props) == null ? void 0 : _a3.src) {
-          this.scriptPromises.push(new Promise((resolve) => {
-            const done = () => resolve();
-            node.addEventListener("load", done, { once: true });
-            node.addEventListener("error", done, { once: true });
-            setTimeout(done, 1e4);
-          }));
-        }
-      }
-      element.children && element.children.forEach((d) => {
-        node.appendChild(this.createElement(d));
-      });
-      return node;
-    }
-    /** svg限定生成方法 */
-    createSVG(element) {
-      const node = document.createElementNS("http://www.w3.org/2000/svg", element.tagName);
-      element.props && Object.entries(element.props).forEach((d) => {
-        node.setAttribute(d[0], d[1]);
-      });
-      element.children && element.children.forEach((d) => {
-        node.appendChild(this.createSVG(d));
-      });
-      return node;
-    }
-    /** 添加为目标节点的子节点 */
-    appendTo(node) {
-      try {
-        node.append(this.toFragment());
-      } catch (e) {
-        debug.error(e);
-      }
-    }
-    /** 替换目标节点 */
-    replace(node) {
-      try {
-        node.replaceWith(this.toFragment());
-      } catch (e) {
-        debug.error(e);
-      }
-    }
-    addEventListener(target, type, listener) {
-      try {
-        const arr2 = target.split("");
-        let dom = this.vdom;
-        let ele;
-        while (dom && arr2.length) {
-          const i2 = Number(arr2.shift());
-          if (i2) {
-            ele = dom[i2];
-            dom = ele.children;
-          }
-        }
-        ele.event || (ele.event = {});
-        ele.event[type] = listener;
-      } catch (e) {
-        debug.error(e);
-      }
-    }
-    removeEventListener(target, type) {
-      var _a3;
-      try {
-        const arr2 = target.split("");
-        let dom = this.vdom;
-        let ele;
-        while (dom && arr2.length) {
-          const i2 = Number(arr2.shift());
-          if (i2) {
-            ele = dom[i2];
-            dom = ele.children;
-          }
-        }
-        (_a3 = ele.event) == null ? true : delete _a3[type];
-      } catch (e) {
-        debug.error(e);
-      }
-    }
   };
 
   // src/html/space.html
@@ -27745,6 +27718,130 @@ const MODULES = `
   function webpackUnblock() {
     blockedPatterns.length = 0;
   }
+
+  // src/utils/vdomtool.ts
+  init_tampermonkey();
+  var VdomTool = class {
+    vdom;
+    scriptPromises = [];
+    get scriptsReady() {
+      if (!this.scriptPromises.length) return Promise.resolve();
+      return Promise.all(this.scriptPromises).then(() => {
+      });
+    }
+    constructor(html) {
+      if (typeof html === "string") {
+        this.vdom = normalizeVdom(htmlVnode(html));
+      } else {
+        this.vdom = html;
+      }
+    }
+    /** 生成 DocumentFragment（会过滤script标签，请稍后使用\`loadScript\`方法依次运行所有script） */
+    toFragment() {
+      this.scriptPromises = [];
+      const fragment = document.createDocumentFragment();
+      this.vdom.forEach((d) => {
+        fragment.appendChild(this.createElement(d));
+      });
+      return fragment;
+    }
+    /** 根据vdom生成真DOM（过滤script标签） */
+    createElement(element) {
+      var _a3;
+      if (element.tagName === "text") {
+        return document.createTextNode(element.text);
+      }
+      if (element.tagName === "svg") {
+        return this.createSVG(element);
+      }
+      const node = document.createElement(element.tagName);
+      element.props && Object.entries(element.props).forEach((d) => {
+        node.setAttribute(d[0], d[1]);
+      });
+      element.text && node.appendChild(document.createTextNode(element.text));
+      element.event && Object.entries(element.event).forEach((d) => {
+        node.addEventListener(...d);
+      });
+      if (element.tagName === "script") {
+        node.async = false;
+        if ((_a3 = element.props) == null ? void 0 : _a3.src) {
+          this.scriptPromises.push(new Promise((resolve) => {
+            const done = () => resolve();
+            node.addEventListener("load", done, { once: true });
+            node.addEventListener("error", done, { once: true });
+            setTimeout(done, 1e4);
+          }));
+        }
+      }
+      element.children && element.children.forEach((d) => {
+        node.appendChild(this.createElement(d));
+      });
+      return node;
+    }
+    /** svg限定生成方法 */
+    createSVG(element) {
+      const node = document.createElementNS("http://www.w3.org/2000/svg", element.tagName);
+      element.props && Object.entries(element.props).forEach((d) => {
+        node.setAttribute(d[0], d[1]);
+      });
+      element.children && element.children.forEach((d) => {
+        node.appendChild(this.createSVG(d));
+      });
+      return node;
+    }
+    /** 添加为目标节点的子节点 */
+    appendTo(node) {
+      try {
+        node.append(this.toFragment());
+      } catch (e) {
+        debug.error(e);
+      }
+    }
+    /** 替换目标节点 */
+    replace(node) {
+      try {
+        node.replaceWith(this.toFragment());
+      } catch (e) {
+        debug.error(e);
+      }
+    }
+    addEventListener(target, type, listener) {
+      try {
+        const arr2 = target.split("");
+        let dom = this.vdom;
+        let ele;
+        while (dom && arr2.length) {
+          const i2 = Number(arr2.shift());
+          if (i2) {
+            ele = dom[i2];
+            dom = ele.children;
+          }
+        }
+        ele.event || (ele.event = {});
+        ele.event[type] = listener;
+      } catch (e) {
+        debug.error(e);
+      }
+    }
+    removeEventListener(target, type) {
+      var _a3;
+      try {
+        const arr2 = target.split("");
+        let dom = this.vdom;
+        let ele;
+        while (dom && arr2.length) {
+          const i2 = Number(arr2.shift());
+          if (i2) {
+            ele = dom[i2];
+            dom = ele.children;
+          }
+        }
+        (_a3 = ele.event) == null ? true : delete _a3[type];
+      } catch (e) {
+        debug.error(e);
+      }
+    }
+  };
 
   // src/page/page.ts
   var Page = class {
@@ -27939,18 +28036,31 @@ const MODULES = `
     /** 失效视频aid */
     aids = [];
     aidInfo = [];
+    /** 解析当前页面 mid */
+    resolveMid() {
+      var _a3, _b2;
+      const rawMid = ((_a3 = location.pathname.match(/^\\/(\\d+)/)) == null ? void 0 : _a3[1]) || ((_b2 = BLOD.path[3]) == null ? void 0 : _b2.split(/[?#]/)[0]);
+      const pathMid = Number(rawMid);
+      if (pathMid && pathMid > 0) {
+        return pathMid;
+      }
+      if (location.pathname === "/" || location.pathname === "") {
+        return uid || Number(getCookies().DedeUserID) || 0;
+      }
+      return 0;
+    }
     constructor() {
       super(space_default);
-      this.mid = Number(BLOD.path[3] && BLOD.path[3].split("?")[0]);
+      this.mid = this.resolveMid();
       this.midInfo();
       user.addCallback((status) => {
         if (status.space) {
           this.rewrite(status.header);
         } else {
           status.album && this.album();
-          status.jointime && this.jointime();
           status.lostVideo && this.lostVideo();
         }
+        status.jointime && this.jointime();
       });
     }
     /** 重写为旧版个人空间页 */
@@ -28015,17 +28125,163 @@ const MODULES = `
         }
       }, false);
     }
+    jointimeInited = false;
     /** 注册时间 */
     jointime() {
-      poll(() => document.querySelector(".section.user-info"), (t) => {
-        accountGetCardByMid(this.mid).then((d) => {
-          const jointime = timeFormat(d.regtime * 1e3, true);
-          const node = t.lastChild;
-          new VdomTool(\`<div class="info-regtime" style="display: inline-block;word-break: break-all;">
-                    <span class="info-command" style="display: inline-block;font-size: 12px;font-family: Microsoft YaHei;line-height: 16px;color: #9499a0;margin-right: 16px;">注册</span>
-                    <span class="info-value" style="color: #6d757a;font-family: Microsoft YaHei;font-size: 12px;line-height: 16px;padding-right: 15px;">\${jointime}</span>
-                </div>\`).appendTo(node);
-        });
+      if (this.jointimeInited) return;
+      this.jointimeInited = true;
+      if (!this.mid) {
+        this.mid = this.resolveMid();
+      }
+      document.getElementById("jointime-old-style") || addCss(\`
+            .user .info .meta .row {
+                height: auto !important;
+                white-space: normal;
+            }
+            .user .info .jointime .icon {
+                background-position: -209px -84px;
+            }
+            .user .info .jointime .text {
+                color: #00a1d6;
+            }
+        \`, "jointime-old-style");
+      const tryMount = () => {
+        var _a3;
+        const uidItem = document.querySelector(".user .info .meta .row .item.uid");
+        const row = (uidItem == null ? void 0 : uidItem.closest(".row")) || document.querySelector(".user .info .meta .row");
+        if (row && (uidItem || row.querySelector(".item.uid"))) {
+          const targetUidItem = uidItem || row.querySelector(".item.uid");
+          const domMidStr = (_a3 = targetUidItem == null ? void 0 : targetUidItem.textContent) == null ? void 0 : _a3.replace(/\\D+/g, "");
+          const domMid = domMidStr ? Number(domMidStr) : 0;
+          if (domMid > 0 && domMid !== this.mid) {
+            this.mid = domMid;
+          }
+          const targetMid = domMid > 0 ? domMid : this.mid;
+          if (!targetMid) return;
+          const existingItem = row.querySelector(".item.jointime");
+          if (existingItem && existingItem.dataset.mid === String(targetMid)) {
+            return;
+          }
+          if (row.dataset.jointimePending === String(targetMid) || row.dataset.jointimeChecked === String(targetMid)) {
+            return;
+          }
+          row.dataset.jointimePending = String(targetMid);
+          getSpaceJointime(targetMid).then((info) => {
+            var _a4, _b2, _c;
+            if (row.dataset.jointimePending === String(targetMid)) {
+              delete row.dataset.jointimePending;
+            }
+            if (!row.isConnected) return;
+            const currentDomMid = Number((_b2 = (_a4 = row.querySelector(".item.uid")) == null ? void 0 : _a4.textContent) == null ? void 0 : _b2.replace(/\\D+/g, "")) || this.mid;
+            if (currentDomMid && currentDomMid !== targetMid) return;
+            if (!info) {
+              row.dataset.jointimeChecked = String(targetMid);
+              (_c = row.querySelector(".item.jointime")) == null ? void 0 : _c.remove();
+              return;
+            }
+            let item = row.querySelector(".item.jointime");
+            if (!item) {
+              item = document.createElement("div");
+              item.className = "item jointime";
+              row.appendChild(item);
+            }
+            let iconSpan = item.querySelector(".icon");
+            if (!iconSpan) {
+              iconSpan = document.createElement("span");
+              iconSpan.className = "icon";
+              item.insertBefore(iconSpan, item.firstChild);
+            }
+            let textSpan = item.querySelector(".text");
+            if (!textSpan) {
+              textSpan = document.createElement("span");
+              textSpan.className = "text";
+              item.appendChild(textSpan);
+            }
+            item.dataset.mid = String(targetMid);
+            item.title = info.hint || "注册时间";
+            textSpan.textContent = info.text;
+          }).catch((e) => {
+            if (row.dataset.jointimePending === String(targetMid)) {
+              delete row.dataset.jointimePending;
+            }
+            debug.error("获取或挂载注册时间异常", e);
+          });
+          return;
+        }
+        const newMeta = document.querySelector(".section.user-info .user-info-main .meta") || document.querySelector(".section.user-info");
+        if (newMeta) {
+          const targetMid = this.mid || this.resolveMid();
+          if (!targetMid) return;
+          const existingItem = document.querySelector(".info-regtime");
+          if (existingItem && existingItem.dataset.mid === String(targetMid)) {
+            return;
+          }
+          if (newMeta.dataset.jointimePending === String(targetMid) || newMeta.dataset.jointimeChecked === String(targetMid)) {
+            return;
+          }
+          newMeta.dataset.jointimePending = String(targetMid);
+          getSpaceJointime(targetMid).then((info) => {
+            var _a4;
+            if (newMeta.dataset.jointimePending === String(targetMid)) {
+              delete newMeta.dataset.jointimePending;
+            }
+            if (!newMeta.isConnected) return;
+            const currentMid = this.mid || this.resolveMid();
+            if (currentMid && currentMid !== targetMid) return;
+            if (!info) {
+              newMeta.dataset.jointimeChecked = String(targetMid);
+              (_a4 = document.querySelector(".info-regtime")) == null ? void 0 : _a4.remove();
+              return;
+            }
+            let regNode = document.querySelector(".info-regtime");
+            if (!regNode) {
+              regNode = document.createElement("div");
+              regNode.className = "info-regtime";
+              regNode.setAttribute("style", "display: inline-block;word-break: break-all;");
+              const cmdSpan = document.createElement("span");
+              cmdSpan.className = "info-command";
+              cmdSpan.setAttribute("style", "display: inline-block;font-size: 12px;font-family: Microsoft YaHei;line-height: 16px;color: #9499a0;margin-right: 16px;");
+              cmdSpan.textContent = "注册";
+              const valSpan2 = document.createElement("span");
+              valSpan2.className = "info-value";
+              valSpan2.setAttribute("style", "color: #6d757a;font-family: Microsoft YaHei;font-size: 12px;line-height: 16px;padding-right: 15px;");
+              regNode.appendChild(cmdSpan);
+              regNode.appendChild(valSpan2);
+              const targetNode = newMeta.classList.contains("meta") ? newMeta : newMeta.querySelector(".user-info-main .meta") || newMeta.lastElementChild || newMeta;
+              targetNode.appendChild(regNode);
+            }
+            regNode.dataset.mid = String(targetMid);
+            regNode.title = info.hint || "注册时间";
+            let valSpan = regNode.querySelector(".info-value");
+            if (!valSpan) {
+              valSpan = document.createElement("span");
+              valSpan.className = "info-value";
+              regNode.appendChild(valSpan);
+            }
+            valSpan.textContent = info.text;
+          }).catch((e) => {
+            if (newMeta.dataset.jointimePending === String(targetMid)) {
+              delete newMeta.dataset.jointimePending;
+            }
+            debug.error("获取或挂载新版个人空间注册时间异常", e);
+          });
+        }
+      };
+      poll(() => {
+        tryMount();
+        const oldRow = document.querySelector(".user .info .meta .row");
+        if (oldRow && (oldRow.querySelector(".item.jointime") || oldRow.dataset.jointimeChecked)) {
+          return true;
+        }
+        const newMeta = document.querySelector(".section.user-info");
+        if (newMeta && (document.querySelector(".info-regtime") || newMeta.dataset.jointimeChecked)) {
+          return true;
+        }
+        return false;
+      }, () => {
+      });
+      observerAddedNodes(() => {
+        tryMount();
       });
     }
     /** 失效视频 */
