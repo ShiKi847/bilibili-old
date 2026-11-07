@@ -26,3 +26,13 @@
   2. `src/io/account-getcardbymid.ts`：实现 `getSpaceJointime(mid)`（本人空间调用创作中心日历接口获取精确到秒注册时间，支持 `fetch` 与 `GM.fetch` 容灾及内存缓存）与 `estimateJointimeByMid(mid)`（采用 Gemini 4 Argon 校准的 15 个真实 B 站历史发号里程碑锚点对 `< 7 亿` 老号分段线性插值估算年月，`>= 7 亿` 返回 `null`）。
   3. `src/page/space.ts`：解除 `user.addCallback` 分支互斥；实现 `resolveMid()` 仅在根路径 `/` 回退登录 `uid`；在 `tryMount()` 中结合 `.item.uid` DOM 文本二次实锤校准 `mid`、状态锁防并发竞态、使用 `createElement` + `textContent` 安全组装 `.item.jointime` 并注入 `-209px -84px` 日历图标样式；执行 `npm run tampermonkey` 与 `npm run chrome` 零报错构建完成。
   4. 全局配置 `C:\Users\shiki847\.gemini\config\GEMINI.md`：写入 Planner/Reviewer 与 Coder 的目录写权限物理隔离铁律，严禁 Coder 子代理触碰 `.handoff/` 下任何文档。
+
+
+## [2026-11-08 00:52 +09:00] 修复下载视频点击链接 0:00 黑屏无视频问题，恢复新标签页在线播放预览 (v10.13.13 / 多模型协同流水线: Gemini 4 Argon 规划与审查 + Gemini 3.8 Flash 编码)
+- **归档**：由主代理（Gemini 4 Argon）亲自编写并归档 `.handoff/v10.13.13/plan_download_video_preview.md` 与 `.handoff/v10.13.13/review_download_video_preview.md`（审查通过 Approved）。
+- **根因**：① `src/core/download.ts` 中 `getMp4()` -> `flv()` 请求 `playurl` 时未传 `platform=html5`，B 站下发 `platform=pc` 直链；在新标签页打开时，内置 `<video>` 发起 `Range` 请求的 `Referer` 变为 CDN 链接自身（Self Referer），被 `upos-sz-mirrorcosov.bilivideo.com` 拦截返回 `403 Forbidden` 导致 `0:00` 黑屏；② Chrome 扩展版 `GM.modifyRequestheader` 传入含非 ASCII 中文字符的 `Content-Disposition: attachment; filename="..."` 导致整条 `declarativeNetRequest` 规则被 Chrome 报错拒绝，且强加 `attachment` 阻止在线预览；③ `chrome/background.ts` 的 `updateSessionRules` 等 4 个异步消息分支漏写 `return true;` 导致消息通道提前关闭。
+- **改动**：
+  1. `src/io/api-playurl.ts`：在 `IApiPlayurl` 接口中新增可选字段 `platform?: string;` 与 `high_quality?: number;`。
+  2. `src/core/download.ts`：`flv()` 显式传入 `{ avid, cid, platform: 'html5', high_quality: 1 }` 获取免 Referer 签名的 HTML5 MP4 直链；`getMp4()` 增加 `hasHtml5Mp4` 检查与 `BLOD.pgc` 降级回退；`pushDownload()` 移除含非 ASCII 字符的 `Content-Disposition` 响应头并将 `urlFilter` 规范化为 `${targetUrl.origin}${targetUrl.pathname}`。
+  3. `chrome/background.ts`：在 `executeScript`、`insertCSS`、`updateRulesetOptions`、`updateSessionRules` 四个异步分支补齐 `return true;`。
+  4. 执行 `npm run tampermonkey` 与 `npm run chrome` 双端零报错构建完成。

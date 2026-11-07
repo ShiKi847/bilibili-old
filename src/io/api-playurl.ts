@@ -355,4 +355,6 @@ interface IApiPlayurl {
     otype?: string;
     avid: number;
     cid: number;
+    platform?: string;
+    high_quality?: number;
 }
