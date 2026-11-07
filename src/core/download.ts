@@ -122,17 +122,16 @@ export class Download {
                     break;
                 }
                 default: {
-                    if (!_UserScript_) { // 用户脚本暂不支持一下操作
+                    if (!_UserScript_) { // 用户脚本暂不支持以下操作
                         if (!('$id' in data)) {
-                            (<any>data).$id = await GM.modifyRequestheader(data.url[0], {
+                            const targetUrl = new URL(data.url[0], location.href);
+                            (<any>data).$id = await GM.modifyRequestheader(`${targetUrl.origin}${targetUrl.pathname}`, {
                                 'user-agent': user.userStatus!.userAgent,
                                 'referer': user.userStatus!.referer
-                            }, {
-                                'Content-Disposition': `attachment${data.fileName ? `; filename="${data.fileName}"` : ''}`
-                            }, false);
+                            }, undefined, false);
                         }
                         setTimeout(() => {
-                            (<any>data).$id();
+                            (<any>data).$id?.();
                             delete (<any>data).$id;
                         }, 1e5);
                     }
@@ -173,11 +172,17 @@ export class Download {
         this.gets.push('_');
     }
     protected getMp4() {
-        if (this.data.mp4 || this.gets.includes('mp4')) return;
+        const hasHtml5Mp4 = this.data.mp4?.some(d => d.url?.[0]?.includes('platform=html5'));
+        if (hasHtml5Mp4 || this.gets.includes('mp4')) return;
         this.downloading++;
-        (BLOD.pgc ? this.mp4(BLOD.cid) : this.flv(BLOD.aid, BLOD.cid))
+        (BLOD.pgc
+            ? this.mp4(BLOD.cid).then(d => (!d || !(d as any).durl) ? this.flv(BLOD.aid, BLOD.cid) : d).catch(() => this.flv(BLOD.aid, BLOD.cid))
+            : this.flv(BLOD.aid, BLOD.cid))
             .then(d => {
                 this.gets.push('mp4');
+                if (Boolean((d as any)?.durl?.length || (d as any)?.data?.durl?.length || (d as any)?.result?.durl?.length)) {
+                    this.data.mp4 = [];
+                }
                 this.decodePlayinfo(d);
             })
             .finally(() => {
@@ -218,7 +223,7 @@ export class Download {
         return new ApiPlayurlProj({ cid, access_key: user.userStatus!.accessKey.token }, BLOD.pgc).getData();
     }
     private flv(avid: number, cid: number) {
-        return <Promise<IPlayurlDurl>>apiPlayurl({ avid, cid }, false, BLOD.pgc);
+        return <Promise<IPlayurlDurl>>apiPlayurl({ avid, cid, platform: 'html5', high_quality: 1 }, false, BLOD.pgc);
     }
     private dash(avid: number, cid: number) {
         return <Promise<IPlayurlDash>>apiPlayurl({ avid, cid }, true, BLOD.pgc);

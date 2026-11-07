@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bilibili 旧播放页
 // @namespace    MotooriKashin
-// @version      10.13.12-c3dd748427ccbbefce8d3423714030e5ad97afd7
+// @version      10.13.13-c3dd748427ccbbefce8d3423714030e5ad97afd7
 // @description  恢复Bilibili旧版页面，为了那些念旧的人。
 // @author       MotooriKashin, wly5556, FMPeach, ShiKi847
 // @homepage     https://github.com/ShiKi847/bilibili-old
@@ -16625,15 +16625,14 @@ const MODULES = `
           default: {
             if (false) {
               if (!("\$id" in data)) {
-                data.\$id = await GM.modifyRequestheader(data.url[0], {
+                const targetUrl = new URL(data.url[0], location.href);
+                data.\$id = await GM.modifyRequestheader(\`\${targetUrl.origin}\${targetUrl.pathname}\`, {
                   "user-agent": user.userStatus.userAgent,
                   "referer": user.userStatus.referer
-                }, {
-                  "Content-Disposition": \`attachment\${data.fileName ? \`; filename="\${data.fileName}"\` : ""}\`
-                }, false);
+                }, void 0, false);
               }
               setTimeout(() => {
-                data.\$id();
+                (_a3 = data.\$id) == null ? void 0 : _a3.call(data);
                 delete data.\$id;
               }, 1e5);
             }
@@ -16674,10 +16673,19 @@ const MODULES = `
       this.gets.push("_");
     }
     getMp4() {
-      if (this.data.mp4 || this.gets.includes("mp4")) return;
+      var _a3;
+      const hasHtml5Mp4 = (_a3 = this.data.mp4) == null ? void 0 : _a3.some((d) => {
+        var _a4, _b2;
+        return (_b2 = (_a4 = d.url) == null ? void 0 : _a4[0]) == null ? void 0 : _b2.includes("platform=html5");
+      });
+      if (hasHtml5Mp4 || this.gets.includes("mp4")) return;
       this.downloading++;
-      (BLOD.pgc ? this.mp4(BLOD.cid) : this.flv(BLOD.aid, BLOD.cid)).then((d) => {
+      (BLOD.pgc ? this.mp4(BLOD.cid).then((d) => !d || !d.durl ? this.flv(BLOD.aid, BLOD.cid) : d).catch(() => this.flv(BLOD.aid, BLOD.cid)) : this.flv(BLOD.aid, BLOD.cid)).then((d) => {
+        var _a4, _b2, _c, _d, _e;
         this.gets.push("mp4");
+        if (Boolean(((_a4 = d == null ? void 0 : d.durl) == null ? void 0 : _a4.length) || ((_c = (_b2 = d == null ? void 0 : d.data) == null ? void 0 : _b2.durl) == null ? void 0 : _c.length) || ((_e = (_d = d == null ? void 0 : d.result) == null ? void 0 : _d.durl) == null ? void 0 : _e.length))) {
+          this.data.mp4 = [];
+        }
         this.decodePlayinfo(d);
       }).finally(() => {
         this.downloading--;
@@ -16715,7 +16723,7 @@ const MODULES = `
       return new ApiPlayurlProj({ cid, access_key: user.userStatus.accessKey.token }, BLOD.pgc).getData();
     }
     flv(avid, cid) {
-      return apiPlayurl({ avid, cid }, false, BLOD.pgc);
+      return apiPlayurl({ avid, cid, platform: "html5", high_quality: 1 }, false, BLOD.pgc);
     }
     dash(avid, cid) {
       return apiPlayurl({ avid, cid }, true, BLOD.pgc);
