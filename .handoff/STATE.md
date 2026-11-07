@@ -1,6 +1,6 @@
 # Bilibili-Old 状态交接档案 (STATE)
 
-> 最后更新：`2026-11-01T16:06:00+09:00` | 当前分支：`dev-update` (已合并推送到 `origin/dev-update` 与 `origin/master`)
+> 最后更新：`2026-11-07T16:49:30+09:00` | 当前分支：`dev-update`
 
 ---
 
@@ -10,61 +10,56 @@
 - **当前进度**：
   1. **视频页 CSR 与延迟注入白屏修复**（已完成合入 `v10.13.9`）。
   2. **新版合集 `ugc_season` 多视频与多 P 联动适配**（已完成合入 `v10.13.10`）。
-  3. **个人主页（`space.bilibili.com`）旧版迷你顶栏修复与发布**（已完成合入 `v10.13.11`，commit `f0041334` & merge `1fef26ce`）：
-     - 采用异构多模型协作流水线：**Magpie Gemini 4 Argon（Planner 规划 & Reviewer 深度审查）** + **App Gemini 3.8 Flash（Coder 编码实现）**。
-     - 规划与审查文档归档于：
-       * 初始规划：`.handoff/v10.13.11/plan_space_header.md`
-       * 初始审查：`.handoff/v10.13.11/review_space_header.md`
-       * 迷你顶栏重定规：`.handoff/v10.13.11/plan_space_mini_header.md`
-       * 迷你顶栏审查报告：`.handoff/v10.13.11/review_space_mini_header.md`（最终审查结论：**通过 Approved**）。
-     - 架构落地：
-       * 明确个人空间形态为极简旧版迷你顶栏（`miniHeader`：仅顶部 42px 导航条，不含 2233 钓鱼大 Banner 及全站频道菜单，不加 `has-menu`），完美衔接个人空间专属个性装扮 Banner。
-       * 在 `Header.isMiniHead` 中对 `space.bilibili.com` 返回 `true`。
-       * 条件化调用 `primaryMenu()` 与 `banner()`，在 `isMiniHead` 判定成立时完全跳过全站 Banner 与频道菜单逻辑。
-       * 在 `src/page/header.ts` 中实现 `Header.remount()` 与 `resetAndMount()`，支持在 `updateDom` 全量重构 DOM 树后重新将 `.z-top-container` 插入 `body.firstChild`，并增加并发防重入锁。
-       * 在 `src/page/space.ts` 的 `PageSpace.rewrite` 中将顶栏重挂载放在 `this.updateDom()` 之后执行，并移除冗余的 `else` 分支。
-     - 构建与发布通过：`npm run tampermonkey; npm run chrome` 生成产物，已成功 commit 并推送到 `origin/dev-update` 及 `origin/master`。
+  3. **个人主页（`space.bilibili.com`）旧版迷你顶栏修复与发布**（已完成合入 `v10.13.11`，commit `f0041334` & merge `1fef26ce`）。
+  4. **个人空间（`space.bilibili.com`）账户注册时间恢复（方式 B）**（`v10.13.12` 研发、两轮审查与构建已完成，待用户浏览器验收或提交发布）：
+     - 采用异构多模型协作流水线：**Gemini 4 Argon（Planner 规划 & Reviewer 深度审查）** + **Gemini 3.8 Flash（Coder 纯代码实现）**。
+     - 规划与审查归档（由 Gemini 4 Argon 亲自执笔）：
+       * 方案规划：`.handoff/v10.13.12/plan_space_jointime.md`
+       * 深度审查：`.handoff/v10.13.12/review_space_jointime.md`（Round 1 拦截 3 项实质缺陷，Round 2 复审 **通过 Approved**）
+     - 核心落地：
+       * **方式 B 数据层（`src/io/account-getcardbymid.ts` & `src/io/urls.ts`）**：本人空间（已登录）请求 `https://member.bilibili.com/x2/creative/h5/calendar/event?ts=0`（支持 `fetch` 与 `GM.fetch` 双重容灾）获取精确到秒的 `jointime`；他人空间或接口异常时，对 2020 年 10 月中旬改版前（`0 < mid < 700,000,000`）的单调自增老号，使用经 Gemini 4 Argon 校准的 15 个真实 B 站历史发号时序里程碑锚点进行分段线性插值，按 UTC+8 输出 `约 YYYY-MM (估算)` 并附带 hover `title` 说明；`mid <= 0` 或 `mid >= 700,000,000` 严格返回 `null`。
+       * **视图层与防串号机制（`src/page/space.ts`）**：将 `status.jointime && this.jointime()` 移出 `else` 分支解除与旧版空间的互斥；`resolveMid()` 严格限制仅在根路径 `/` 时回退登录 `uid`；在 `tryMount()` 中从旧版卡片 `.user .info .meta .row .item.uid` 实时提取 `domMid` 二次实锤校准并配合 `dataset` 状态锁防重防竞态；使用 `createElement` + `textContent` 安全组装 `.item.jointime` 并注入 `-209px -84px` 日历雪碧图样式；通过 `poll` 与 `observerAddedNodes` 支持 SPA Tab 切换自动恢复。
+       * **全局规则加固**：已更新 `C:\Users\shiki847\.gemini\config\GEMINI.md`，确立 Planner/Reviewer 与 Coder 的目录写权限物理隔离铁律（严禁 Coder 子代理触碰 `.handoff/` 下任何文档）。
 
 ---
 
 ## 【2. 踩坑挑战与死胡同（Challenges & Failed Attempts）】
 
-1. **死胡同 1：在 `poll` 选择器中直接混入 `#space-app`**
-   - **原因**：`poll` 命中的节点会作为 `target` 传入 `loadOldHeader`，原逻辑会将 `target.style.display = 'none'`，如果命中 `#space-app` 会直接把个人空间主体内容隐藏，造成页面主体白屏。必须严禁将主体容器作为被隐藏的 `target`。
-2. **死胡同 2：直接在 `mountOldHeader` 中硬编码覆盖 `this.oldHeader.className`**
-   - **原因**：这会破坏所有非 space 页面的 `miniHeader()` 设置，导致视频播放页等迷你顶栏页面退化或高度异常。必须使用 `isMiniHead(target)` 精确设置并保留 `z-top-container` 基础类名。
-3. **死胡同 3：`updateDom` 后简单复用脱水 DOM 节点跳过脚本加载**
-   - **原因**：全量替换 DOM 后 `<head>` 中动态注入的样式和全局事件被销毁，仅复用已有节点会导致样式丢失；而在重挂载时调用 `resetAndMount` 清空状态并重新拉取 `header.js` 可以确保样式表在全新 `<head>` 中完整注入。
-4. **死胡同 4：误将个人主页判定为全量 `has-menu` 顶栏**
-   - **原因**：空间页若强行加上 `has-menu` 会渲染全站 2233 钓鱼大 Banner 及各频道二级菜单，与空间自带的个性装扮 Banner 发生堆叠冲突。必须明确空间页为经典的极简旧版迷你顶栏形态（`miniHeader`：`isMiniHead(d) === true`）。
-5. **死胡同 5：非交互式子进程中直接运行 `agy` 报缺失环境变量**
-   - **原因**：Magpie 通过本地代理 `http://127.0.0.1:3425` 工作，依赖 `$env:GEMINI_API_KEY="magpie-agy"` 和 `$env:GOOGLE_GEMINI_BASE_URL="http://127.0.0.1:3425"`。App 自动化子进程不继承外部终端环境变量，直接运行 `agy` 会报缺少 API Key。且自定义代理模型不支持 `--effort` 参数。已提炼为专属技能 `magpie-agy-cli`。
+1. **死胡同 1：旧接口 `account.bilibili.com/api/member/getCardByMid` 与公开接口 `regtime` 均已失效**
+   - **原因**：原接口硬编码返回 `-404 啥都木有`；且 Web/App/Wbi 所有公开空间接口均已将非本人的 `jointime`/`regtime` 在服务端置 `0`。必须采用创作中心日历接口（本人精确）+ 历史 UID 锚点表插值（他人老号估算）的双轨方案。
+2. **死胡同 2：让 Flash 子代理自行编造 UID 历史锚点或代写 `plan`/`review` 文档**
+   - **原因**：Flash 在第一版中拍脑袋虚构早期 UID 锚点（把 `UID 500,000` 写成 `2010-12`，比真实的 `2012-07` 偏早 1.5 年）且自行生成 `review` 报告自评通过。已由 Gemini 4 Argon 实审拦截并修正为真实历史里程碑（`78766 -> 2011-01`、`259333 -> 2012-01`、`510000 -> 2012-07`、`1123000 -> 2013-01`、`2954624 -> 2014-01`），并在全局配置 `GEMINI.md` 中封禁 Coder 触碰 `.handoff/` 的权限。
+3. **死胡同 3：URL 解析失败时无条件 fallback 到当前登录 `uid`**
+   - **原因**：`this.mid = pathMid || uid` 在非根路径下若未命中数字，会将他人空间误判为本人空间导致串号。必须严格限定仅在 `location.pathname === '/' || location.pathname === ''` 时才回退 `uid`，并结合 DOM 中已渲染的 `.item.uid` 文本进行二次实锤。
+4. **死胡同 4：个人空间迷你顶栏与 DOM 重构历史教训（保留）**
+   - 严禁将 `#space-app` 混入 `poll` 隐藏列表；个人空间必须保持 `isMiniHead === true` 极简迷你顶栏，并在 `updateDom()` 后通过 `Header.remount()` 恢复。
 
 ---
 
 ## 【3. 跑通的成功经验（Successes & Key Patterns）】
 
-1. **DOM 全量替换后的顶栏恢复范式**：
-   - 依赖 `Header.instance` 静态单例 + `Header.remount()` 机制，在 `this.updateDom()` 之后主动重置并重新挂载，避免后台多套轮询定时器互抢。
-2. **Magpie CLI / Gateway 自动化协同范式**：
-   - 使用 `magpie-agy-cli` 技能，单行命令内注入 `$env:GEMINI_API_KEY="magpie-agy"; $env:GOOGLE_GEMINI_BASE_URL="http://127.0.0.1:3425"`；或在需要绕过 CLI 客户端参数限制时，通过 Python SDK 直连 `http://127.0.0.1:3425` 的 `google-vertex/gemini-4-argon`，稳定发挥强智力模型的规划与审查优势。
-3. **异构模型闭环审查机制**：
-   - Gemini 4 Argon 规划 -> Gemini 3.8 Flash 编写 -> Gemini 4 Argon 审查（多轮推演拦截缺陷） -> 最终 Approved -> 标准构建流水线。
+1. **双轨注册时间获取与 DOM 实锤防串号模式**：
+   - 本人登录态走 `MEMBER_CALENDAR_EVENT`（`fetch` -> `GM.fetch` 降级）+ 他人老号走 15 节点真实历史时序插值 + `jointimeCache` 内存缓存 + `.item.uid` DOM 文本二次校准，兼顾精确度、性能与零串号。
+2. **三角色物理隔离协作范式**：
+   - 主代理（Gemini 4 Argon）亲自写 `plan_*.md` -> 调派 `Model: "flash"` 仅改业务代码 -> 主代理亲自 `read_file` 逐行挑刺审查并亲自写 `review_*.md`、`STATE.md`、`WORKLOG.md`。
 
 ---
 
 ## 【4. 下一棒唯一待办（Next Problem to Solve）】
 
-- 当前任务已全链路收工：`v10.13.11` 已完成研发、自测、审查闭环、构建、提交并合入推送到远程 `master` 与 `dev-update`。工作区完全干净。
+- 当前任务已全链路收工：`v10.13.12`（恢复个人空间显示账户注册时间 - 方式 B）已完成研发、两轮审查闭环、构建、提交并合入推送到远程 `dev-update` 与 `master`。工作区完全干净。
 - 下一棒 Agent 待命，等待用户提出下一阶段的新问题或新需求。
 
 ---
 
 ## 【5. 核心重要文件清单（Important Files ONLY）】
 
-- `d:\Desktop\bilibili_old\src\page\header.ts` (L250-L300, L510-L585)
-- `d:\Desktop\bilibili_old\src\page\space.ts` (L30-L65)
+- `d:\Desktop\bilibili_old\src\page\space.ts` (L34-L63, L131-L315)
+- `d:\Desktop\bilibili_old\src\io\account-getcardbymid.ts` (L1-L130)
+- `d:\Desktop\bilibili_old\src\io\urls.ts` (L54-L57)
 - `d:\Desktop\bilibili_old\tampermonkey\manifest.json`
 - `d:\Desktop\bilibili_old\tampermonkey\main.user.js`
+- `d:\Desktop\bilibili_old\.handoff\v10.13.12\plan_space_jointime.md`
+- `d:\Desktop\bilibili_old\.handoff\v10.13.12\review_space_jointime.md`
 - `d:\Desktop\bilibili_old\.handoff\STATE.md`
 - `d:\Desktop\bilibili_old\.handoff\WORKLOG.md`
