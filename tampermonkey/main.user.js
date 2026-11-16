@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bilibili 旧播放页
 // @namespace    MotooriKashin
-// @version      10.13.13-c3dd748427ccbbefce8d3423714030e5ad97afd7
+// @version      10.13.14-c3dd748427ccbbefce8d3423714030e5ad97afd7
 // @description  恢复Bilibili旧版页面，为了那些念旧的人。
 // @author       MotooriKashin, wly5556, FMPeach, ShiKi847
 // @homepage     https://github.com/ShiKi847/bilibili-old
@@ -26880,18 +26880,56 @@ const MODULES = `
     static instance;
     /** 在 DOM 重构（如 PageSpace.rewrite）后重新挂载顶栏 */
     static remount() {
+      var _a3;
+      if (isDynamicNavPage()) return;
       if (_Header.instance) {
-        _Header.instance.resetAndMount();
+        const inst = _Header.instance;
+        if (inst.oldHeadLoaded && !inst.scriptLoadFailed && inst.mountedDocElement === document.documentElement && ((_a3 = document.body) == null ? void 0 : _a3.contains(inst.oldHeader))) {
+          return;
+        }
+        inst.resetAndMount(inst.findHeaderTarget() || void 0);
       } else {
         new _Header();
       }
     }
+    /** 整页 DOM 替换后的协同对账 */
+    static onDomReplaced() {
+      var _a3;
+      (_a3 = _Header.instance) == null ? void 0 : _a3.reconcileAfterDomReplace();
+    }
     /** 重置状态并重新在全新 DOM 上完整挂载与拉取脚本 */
-    resetAndMount() {
+    resetAndMount(target) {
+      if (isDynamicNavPage()) return;
+      this.mountToken++;
       this.oldHeadLoaded = false;
       this.isScriptLoading = false;
+      this.scriptLoadFailed = false;
+      this.mountedDocElement = null;
       this.oldHeader.innerHTML = "";
-      this.mountOldHeader();
+      this.loadOldHeader(target != null ? target : this.findHeaderTarget() || void 0);
+    }
+    /** 整页 DOM 替换后重置状态并按新文档结构重新挂载 */
+    reconcileAfterDomReplace() {
+      var _a3;
+      if (isDynamicNavPage()) return;
+      (_a3 = this.bodyObserver) == null ? void 0 : _a3.disconnect();
+      this.bodyObserver = null;
+      this.mountToken++;
+      this.oldHeadLoaded = false;
+      this.isScriptLoading = false;
+      this.scriptLoadFailed = false;
+      this.mountedDocElement = null;
+      this.retryCount = 0;
+      this.oldHeader.innerHTML = "";
+      const target = this.findHeaderTarget();
+      if (target) {
+        this.loadOldHeader(target);
+        return;
+      }
+      const hasNativeOldHeader = Array.from(document.querySelectorAll(".z-top-container")).some((el) => el !== this.oldHeader && el.id !== "bili-header-container");
+      if (!hasNativeOldHeader) {
+        this.hookHeadV2();
+      }
     }
     /** 迷你顶栏 */
     miniHeader() {
@@ -26899,12 +26937,15 @@ const MODULES = `
     }
     /** 是否mini顶栏 */
     static isMiniHead(d) {
-      if (location.host === "space.bilibili.com") return true;
+      if (location.host === "space.bilibili.com" || location.host === "t.bilibili.com") return true;
       if (/\\/v\\/(douga|music|dance|game|knowledge|tech|life|kichiku|fashion|information|ent|cinephile|car|sports|animal)\\//.test(location.href)) return true;
       if (/\\/mooc\\//.test(location.href)) return true;
       return location.href.includes("blackboard/topic_list") || location.href.includes("blackboard/x/act_list") || document.querySelector(".large-header") || document.querySelector(".bili-banner") || (d == null ? void 0 : d.getAttribute("type")) == "all" ? false : true;
     }
     constructor() {
+      if (_Header.instance) {
+        return _Header.instance;
+      }
       _Header.instance = this;
       if (isDynamicNavPage()) {
         this.injectDynamicNavFix();
@@ -27076,32 +27117,110 @@ const MODULES = `
     isArticleDynamicVm(vm) {
       return typeof (vm == null ? void 0 : vm.loadArticleDataNew) === "function";
     }
-    hookHeadV2() {
-      poll(() => {
-        return document.querySelector("#internationalHeader") || document.querySelector("#biliMainHeader") || document.querySelector("#bili-header-container") || document.querySelector("#home_nav") || document.querySelector(".bili-header__bar") || (location.host === "space.bilibili.com" ? document.querySelector(".bili-header") : null);
-      }, (d) => {
-        _Header.isMiniHead(d) && this.miniHeader();
-        this.loadOldHeader(d);
-      });
-      poll(() => document.querySelector(".z_top_container"), (d) => {
-        this.loadOldHeader(d);
-        document.querySelector(".header").style.display = "none";
+    /** 查找页面中的顶栏目标占位节点 */
+    findHeaderTarget() {
+      return document.querySelector("#internationalHeader") || document.querySelector("#biliMainHeader") || document.querySelector("#bili-header-container") || document.querySelector("#home_nav") || document.querySelector(".bili-header__bar") || (location.host === "space.bilibili.com" || location.host === "t.bilibili.com" ? document.querySelector(".bili-header") : null);
+    }
+    /** 清理新版顶栏写入的不兼容 window.UserStatus，避免旧版 header.js 跳过初始化 */
+    static cleanIncompatibleUserStatus() {
+      const win = window;
+      try {
+        if (win.UserStatus && typeof win.loadLoginStatus !== "function") {
+          Reflect.deleteProperty(window, "UserStatus");
+          Reflect.deleteProperty(window, "onLoginInfoLoaded");
+        }
+      } catch {
+      }
+    }
+    /** 带超时的外链脚本加载 */
+    loadScriptWithTimeout(src, timeoutMs = 1e4) {
+      return new Promise((resolve, reject) => {
+        let settled = false;
+        const timer = window.setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          reject(new Error("timeout"));
+        }, timeoutMs);
+        loadScript(src).then(
+          (res) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            resolve(Boolean(res));
+          },
+          (err2) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            reject(err2);
+          }
+        );
       });
     }
+    hookHeadV2() {
+      if (!this.isHeadV2Polling) {
+        this.isHeadV2Polling = true;
+        poll(() => this.findHeaderTarget(), (d) => {
+          this.isHeadV2Polling = false;
+          _Header.isMiniHead(d) && this.miniHeader();
+          this.loadOldHeader(d);
+        });
+      }
+      if (!this.isAncientHeadPolling) {
+        this.isAncientHeadPolling = true;
+        poll(() => document.querySelector(".z_top_container"), (d) => {
+          this.isAncientHeadPolling = false;
+          this.loadOldHeader(d);
+          const ancientHead = document.querySelector(".header");
+          if (ancientHead) ancientHead.style.display = "none";
+        });
+      }
+    }
+    /** 现代顶栏轮询锁，避免并发重复启动 poll */
+    isHeadV2Polling = false;
+    /** 远古顶栏轮询锁，避免并发重复启动 poll */
+    isAncientHeadPolling = false;
     /** 已加载旧版顶栏 */
     oldHeadLoaded = false;
     /** 脚本加载中标志，避免并发重入重复拉取执行 header.js */
     isScriptLoading = false;
+    /** 当前挂载对应的文档根元素 */
+    mountedDocElement = null;
+    /** 挂载代数令牌，防止旧文档异步回调污染新挂载 */
+    mountToken = 0;
+    /** 脚本加载失败标志 */
+    scriptLoadFailed = false;
+    /** 自动重试次数 */
+    retryCount = 0;
+    /** body 直接子节点监听，防止 CSR 水合移除旧版顶栏 */
+    bodyObserver = null;
     /** 旧版顶栏节点 */
     oldHeader = document.createElement("div");
+    /** 守护 document.body 下的旧版顶栏不被 CSR 水合意外移除 */
+    observeBodyForHeader() {
+      var _a3;
+      if (!document.body) return;
+      (_a3 = this.bodyObserver) == null ? void 0 : _a3.disconnect();
+      const observedDoc = document.documentElement;
+      this.bodyObserver = new MutationObserver(() => {
+        if (document.documentElement === observedDoc && this.oldHeadLoaded && document.body && !document.body.contains(this.oldHeader)) {
+          const hasOtherNativeHeader = Array.from(document.querySelectorAll(".z-top-container")).some((el) => el !== this.oldHeader && el.id !== "bili-header-container");
+          if (!hasOtherNativeHeader) {
+            document.body.insertBefore(this.oldHeader, document.body.firstChild);
+          }
+        }
+      });
+      this.bodyObserver.observe(document.body, { childList: true });
+    }
     /** 加载旧版顶栏（隐藏旧目标容器并挂载） */
     loadOldHeader(target) {
       var _a3;
       if (target) {
-        if ((target.className === "bili-header__bar" || target.classList.contains("bili-header__bar")) && location.host !== "space.bilibili.com") {
+        if ((target.className === "bili-header__bar" || target.classList.contains("bili-header__bar")) && location.host !== "space.bilibili.com" && location.host !== "t.bilibili.com") {
           addCss('.bili-header.large-header,.header-channel,.z-top-container.has-menu[type="all"] {display: none;}');
         }
         (_a3 = document.body) == null ? void 0 : _a3.classList.remove("header-v3");
+        target.classList.remove("z-top-container");
         target.style.display = "none";
         target.hidden = true;
       }
@@ -27109,19 +27228,26 @@ const MODULES = `
     }
     /** 核心挂载逻辑（支持重入与 DOM 重建后恢复） */
     mountOldHeader(target) {
+      var _a3, _b2;
       this.oldHeader.classList.add("z-top-container");
       if (_Header.isMiniHead(target)) {
         this.miniHeader();
       } else {
         this.oldHeader.classList.add("has-menu");
       }
+      (_a3 = document.getElementById("bili-header-container")) == null ? void 0 : _a3.classList.remove("z-top-container");
       addCss("#internationalHeader,#biliMainHeader,#bili-header-container{display: none !important;}", "old-header-hide-base");
-      if (location.host === "space.bilibili.com") {
+      if (location.host === "space.bilibili.com" || location.host === "t.bilibili.com") {
         addCss(".bili-header { display: none !important; } .z-top-container { position: relative; z-index: 1000; }", "old-space-header-fix");
       }
+      const currentDoc = document.documentElement;
       const attachToDom = () => {
+        if (document.documentElement !== currentDoc) return;
         if (document.body && !document.body.contains(this.oldHeader)) {
           document.body.insertBefore(this.oldHeader, document.body.firstChild);
+        }
+        if (document.body) {
+          this.observeBodyForHeader();
         }
       };
       if (document.body) {
@@ -27129,7 +27255,7 @@ const MODULES = `
       } else {
         poll(() => document.body, attachToDom);
       }
-      if (this.isScriptLoading || this.oldHeadLoaded && document.body && document.body.contains(this.oldHeader) && this.oldHeader.children.length > 0) {
+      if (this.isScriptLoading || this.oldHeadLoaded && !this.scriptLoadFailed && this.mountedDocElement === currentDoc && ((_b2 = document.body) == null ? void 0 : _b2.contains(this.oldHeader))) {
         if (!this.isScriptLoading) {
           _Header.styleFix();
           if (!_Header.isMiniHead(target)) {
@@ -27141,11 +27267,45 @@ const MODULES = `
       }
       this.oldHeadLoaded = true;
       this.isScriptLoading = true;
-      (window.jQuery ? Promise.resolve() : loadScript("//static.hdslb.com/js/jquery.min.js")).then(() => loadScript("//s1.hdslb.com/bfs/seed/jinkela/header/header.js")).then(() => {
+      this.scriptLoadFailed = false;
+      const token = ++this.mountToken;
+      this.mountedDocElement = currentDoc;
+      _Header.cleanIncompatibleUserStatus();
+      (window.jQuery ? Promise.resolve(true) : this.loadScriptWithTimeout("//static.hdslb.com/js/jquery.min.js")).then(() => {
+        var _a4;
+        if (token !== this.mountToken || document.documentElement !== currentDoc) {
+          return false;
+        }
+        _Header.cleanIncompatibleUserStatus();
+        (_a4 = document.getElementById("bili-header-container")) == null ? void 0 : _a4.classList.remove("z-top-container");
+        if (document.body && !document.body.contains(this.oldHeader)) {
+          document.body.insertBefore(this.oldHeader, document.body.firstChild);
+        }
+        return this.loadScriptWithTimeout("//s1.hdslb.com/bfs/seed/jinkela/header/header.js");
+      }).then((loaded) => {
+        if (token !== this.mountToken) return;
         this.isScriptLoading = false;
+        if (!loaded) return;
         _Header.styleFix();
+        window.setTimeout(() => {
+          var _a4;
+          if (token === this.mountToken && document.documentElement === currentDoc && ((_a4 = document.body) == null ? void 0 : _a4.contains(this.oldHeader)) && this.oldHeader.children.length === 0 && !this.isScriptLoading && this.retryCount < 1) {
+            this.retryCount++;
+            this.resetAndMount(target);
+          }
+        }, 2500);
       }).catch(() => {
+        if (token !== this.mountToken) return;
         this.isScriptLoading = false;
+        this.scriptLoadFailed = true;
+        if (this.retryCount < 1) {
+          this.retryCount++;
+          window.setTimeout(() => {
+            if (token === this.mountToken && document.documentElement === currentDoc) {
+              this.resetAndMount(target);
+            }
+          }, 500);
+        }
       });
       if (!_Header.isMiniHead(target)) {
         _Header.primaryMenu();
@@ -27899,6 +28059,7 @@ const MODULES = `
       }
       this.vdom.replace(document.documentElement);
       keepNextHeadMarker && this.restoreNextHeadMarker();
+      Header.onDomReplaced();
       title && !title.includes("404") && (document.title = title);
       setTimeout(() => this.loadedCallback());
     }
@@ -28745,19 +28906,20 @@ const MODULES = `
       super(dynamic_default);
       user.addCallback((status) => {
         if (status.dynamic) {
-          this.rewrite();
+          this.rewrite(status.header);
         } else {
         }
         status.liveRecord || this.liveRecord();
       });
     }
     /** 重写为旧版动态页 */
-    rewrite() {
+    rewrite(hasHeader) {
       this.installImageRecovery();
       urlCleaner.updateLocation(location.href);
-      Header.primaryMenu();
-      Header.banner();
       this.updateDom();
+      if (hasHeader) {
+        Header.remount();
+      }
     }
     installImageRecovery() {
       if (this.imageRecoveryInstalled) return;
