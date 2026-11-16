@@ -36,3 +36,13 @@
   2. `src/core/download.ts`：`flv()` 显式传入 `{ avid, cid, platform: 'html5', high_quality: 1 }` 获取免 Referer 签名的 HTML5 MP4 直链；`getMp4()` 增加 `hasHtml5Mp4` 检查与 `BLOD.pgc` 降级回退；`pushDownload()` 移除含非 ASCII 字符的 `Content-Disposition` 响应头并将 `urlFilter` 规范化为 `${targetUrl.origin}${targetUrl.pathname}`。
   3. `chrome/background.ts`：在 `executeScript`、`insertCSS`、`updateRulesetOptions`、`updateSessionRules` 四个异步分支补齐 `return true;`。
   4. 执行 `npm run tampermonkey` 与 `npm run chrome` 双端零报错构建完成。
+
+
+## [2026-11-16 23:16 +09:00] 修复最上方顶部导航栏偶发消失问题 (v10.13.14 / 多模型协同流水线: Gemini 4 Carbon 规划与审查 + Gemini 4 Hydrogen 编码)
+- **归档**：由主代理（Gemini 4 Carbon）亲自编写并归档 `.handoff/v10.13.14/plan_header_disappear_fix.md` 与 `.handoff/v10.13.14/review_header_disappear_fix.md`（Round 1 拦截 3 项并发轮询与动态弹窗 iframe 边界缺陷，Round 2 复审通过 Approved）。
+- **根因**：① `src/index.ts` 中 `new Header()` 所在的 `user.addCallback` 先于 `new PageDynamic()` 注册；当 `GM.getValue` 返回稍慢、原网页已解析出 `#biliMainHeader` 或 `.bili-header__bar` 时，`hookHeadV2` 的一次性 `poll` 立即同步命中原网页并终止，将 `this.oldHeader` 与 `<script src="jquery.min.js">` 插进即将废弃的原网页 `body`，随后 0ms 后 `PageDynamic.rewrite()` 调用 `this.updateDom()` 替换整棵 `document.documentElement` 将其连根冲掉且未调用 `Header.remount()`；② `dynamic.html` 中 `#bili-header-container` 同时带有 `z-top-container` 类名但被 CSS `display: none !important` 隐藏，存在双容器冲突；③ 新版脚本或模板内 `bili-header.umd.js` 可能在 `jquery.min.js` 加载期间写入缺少 `loadLoginStatus` 的 `window.UserStatus` 导致 `header.js` 跳过初始化，且 CSR 页面水合缺乏 `body` 子节点脱离守护。
+- **改动**：
+  1. `src/page/header.ts`：增加 `Header` 单例防重入守卫与 `isDynamicNavPage()` 守卫；`isMiniHead()` 显式适配 `t.bilibili.com`；抽离 `findHeaderTarget()` 并为 `hookHeadV2()` 增加防重轮询锁；新增 `onDomReplaced()` / `reconcileAfterDomReplace()`（自动区分现代占位模板与原生 `.z-top-container` 模板避免双顶栏）、幂等 `remount()`、`mountToken` 代数隔离、`loadScriptWithTimeout()`、双阶段 `cleanIncompatibleUserStatus()`、剥离 `#bili-header-container` 的 `z-top-container` 类名、空渲染单次自愈重试及 `observeBodyForHeader()` 存活守护。
+  2. `src/page/page.ts`：在 `updateDom()` 完成 `this.vdom.replace(document.documentElement)` 后统一调用 `Header.onDomReplaced()`。
+  3. `src/page/dynamic.ts`：对齐 `space.ts` 规范，移除冗余的 `Header.primaryMenu()` / `Header.banner()`，在 `rewrite(status.header)` 中幂等调用 `Header.remount()`。
+  4. `tampermonkey/manifest.json`：版本号升级至 `10.13.14`，并执行 `npx tsc --noEmit -p chrome/tsconfig.json`、`npm run tampermonkey`、`npm run chrome` 双端零报错构建完成。

@@ -256,18 +256,60 @@ export class Header {
     static instance?: Header;
     /** 在 DOM 重构（如 PageSpace.rewrite）后重新挂载顶栏 */
     static remount() {
+        if (isDynamicNavPage()) return;
         if (Header.instance) {
-            Header.instance.resetAndMount();
+            const inst = Header.instance;
+            if (
+                inst.oldHeadLoaded
+                && !inst.scriptLoadFailed
+                && inst.mountedDocElement === document.documentElement
+                && document.body?.contains(inst.oldHeader)
+            ) {
+                return;
+            }
+            inst.resetAndMount(inst.findHeaderTarget() || undefined);
         } else {
             new Header();
         }
     }
+    /** 整页 DOM 替换后的协同对账 */
+    static onDomReplaced() {
+        Header.instance?.reconcileAfterDomReplace();
+    }
     /** 重置状态并重新在全新 DOM 上完整挂载与拉取脚本 */
-    public resetAndMount() {
+    public resetAndMount(target?: HTMLElement) {
+        if (isDynamicNavPage()) return;
+        this.mountToken++;
         this.oldHeadLoaded = false;
         this.isScriptLoading = false;
+        this.scriptLoadFailed = false;
+        this.mountedDocElement = null;
         this.oldHeader.innerHTML = '';
-        this.mountOldHeader();
+        this.loadOldHeader(target ?? (this.findHeaderTarget() || undefined));
+    }
+    /** 整页 DOM 替换后重置状态并按新文档结构重新挂载 */
+    public reconcileAfterDomReplace() {
+        if (isDynamicNavPage()) return;
+        this.bodyObserver?.disconnect();
+        this.bodyObserver = null;
+        this.mountToken++;
+        this.oldHeadLoaded = false;
+        this.isScriptLoading = false;
+        this.scriptLoadFailed = false;
+        this.mountedDocElement = null;
+        this.retryCount = 0;
+        this.oldHeader.innerHTML = '';
+
+        const target = this.findHeaderTarget();
+        if (target) {
+            this.loadOldHeader(target);
+            return;
+        }
+        const hasNativeOldHeader = Array.from(document.querySelectorAll('.z-top-container'))
+            .some(el => el !== this.oldHeader && el.id !== 'bili-header-container');
+        if (!hasNativeOldHeader) {
+            this.hookHeadV2();
+        }
     }
     /** 迷你顶栏 */
     protected miniHeader() {
@@ -275,7 +317,7 @@ export class Header {
     }
     /** 是否mini顶栏 */
     protected static isMiniHead(d?: HTMLElement) {
-        if (location.host === "space.bilibili.com") return true;
+        if (location.host === "space.bilibili.com" || location.host === "t.bilibili.com") return true;
         // 各种分区主页一律使用mini顶栏
         if (/\/v\/(douga|music|dance|game|knowledge|tech|life|kichiku|fashion|information|ent|cinephile|car|sports|animal)\//.test(location.href)) return true;
         // 公开课使用mini顶栏
@@ -289,6 +331,9 @@ export class Header {
         ) ? false : true;
     }
     constructor() {
+        if (Header.instance) {
+            return Header.instance;
+        }
         Header.instance = this;
         if (isDynamicNavPage()) {
             this.injectDynamicNavFix();
@@ -488,39 +533,123 @@ export class Header {
         return typeof vm?.loadArticleDataNew === 'function';
     }
 
+    /** 查找页面中的顶栏目标占位节点 */
+    public findHeaderTarget(): HTMLElement | null {
+        return document.querySelector<HTMLElement>('#internationalHeader')
+            || document.querySelector<HTMLElement>('#biliMainHeader')
+            || document.querySelector<HTMLElement>('#bili-header-container')
+            || document.querySelector<HTMLElement>('#home_nav')
+            || document.querySelector<HTMLElement>('.bili-header__bar')
+            || ((location.host === "space.bilibili.com" || location.host === "t.bilibili.com")
+                ? document.querySelector<HTMLElement>('.bili-header')
+                : null);
+    }
+    /** 清理新版顶栏写入的不兼容 window.UserStatus，避免旧版 header.js 跳过初始化 */
+    protected static cleanIncompatibleUserStatus() {
+        const win = window as any;
+        try {
+            if (win.UserStatus && typeof win.loadLoginStatus !== 'function') {
+                Reflect.deleteProperty(window, 'UserStatus');
+                Reflect.deleteProperty(window, 'onLoginInfoLoaded');
+            }
+        } catch { }
+    }
+    /** 带超时的外链脚本加载 */
+    protected loadScriptWithTimeout(src: string, timeoutMs = 10000): Promise<boolean> {
+        return new Promise<boolean>((resolve, reject) => {
+            let settled = false;
+            const timer = window.setTimeout(() => {
+                if (settled) return;
+                settled = true;
+                reject(new Error('timeout'));
+            }, timeoutMs);
+            loadScript(src).then(
+                (res) => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(timer);
+                    resolve(Boolean(res));
+                },
+                (err) => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(timer);
+                    reject(err);
+                }
+            );
+        });
+    }
     protected hookHeadV2() {
-        poll(() => {
-            return document.querySelector<HTMLElement>('#internationalHeader')
-                || document.querySelector<HTMLElement>('#biliMainHeader')
-                || document.querySelector<HTMLElement>('#bili-header-container')
-                || document.querySelector<HTMLElement>('#home_nav')
-                || document.querySelector<HTMLElement>('.bili-header__bar')
-                || (location.host === "space.bilibili.com" ? document.querySelector<HTMLElement>('.bili-header') : null)
-        }, d => {
-            Header.isMiniHead(d) && this.miniHeader();
-            this.loadOldHeader(d);
-        });
+        if (!this.isHeadV2Polling) {
+            this.isHeadV2Polling = true;
+            poll(() => this.findHeaderTarget(), d => {
+                this.isHeadV2Polling = false;
+                Header.isMiniHead(d) && this.miniHeader();
+                this.loadOldHeader(d);
+            });
+        }
         // 远古顶栏
-        poll(() => document.querySelector<HTMLElement>('.z_top_container'), d => {
-            this.loadOldHeader(d);
-            document.querySelector<HTMLElement>('.header')!.style.display = 'none';
-        });
+        if (!this.isAncientHeadPolling) {
+            this.isAncientHeadPolling = true;
+            poll(() => document.querySelector<HTMLElement>('.z_top_container'), d => {
+                this.isAncientHeadPolling = false;
+                this.loadOldHeader(d);
+                const ancientHead = document.querySelector<HTMLElement>('.header');
+                if (ancientHead) ancientHead.style.display = 'none';
+            });
+        }
         // poll(() => document.querySelector<HTMLElement>('.international-footer'), d => this.loadOldFooter(d));
         // poll(() => document.querySelector<HTMLElement>('#biliMainFooter'), d => this.loadOldFooter(d));
     }
+    /** 现代顶栏轮询锁，避免并发重复启动 poll */
+    protected isHeadV2Polling = false;
+    /** 远古顶栏轮询锁，避免并发重复启动 poll */
+    protected isAncientHeadPolling = false;
     /** 已加载旧版顶栏 */
     protected oldHeadLoaded = false;
     /** 脚本加载中标志，避免并发重入重复拉取执行 header.js */
     protected isScriptLoading = false;
+    /** 当前挂载对应的文档根元素 */
+    protected mountedDocElement: Element | null = null;
+    /** 挂载代数令牌，防止旧文档异步回调污染新挂载 */
+    protected mountToken = 0;
+    /** 脚本加载失败标志 */
+    protected scriptLoadFailed = false;
+    /** 自动重试次数 */
+    protected retryCount = 0;
+    /** body 直接子节点监听，防止 CSR 水合移除旧版顶栏 */
+    protected bodyObserver: MutationObserver | null = null;
     /** 旧版顶栏节点 */
     protected oldHeader = document.createElement('div');
+    /** 守护 document.body 下的旧版顶栏不被 CSR 水合意外移除 */
+    protected observeBodyForHeader() {
+        if (!document.body) return;
+        this.bodyObserver?.disconnect();
+        const observedDoc = document.documentElement;
+        this.bodyObserver = new MutationObserver(() => {
+            if (
+                document.documentElement === observedDoc
+                && this.oldHeadLoaded
+                && document.body
+                && !document.body.contains(this.oldHeader)
+            ) {
+                const hasOtherNativeHeader = Array.from(document.querySelectorAll('.z-top-container'))
+                    .some(el => el !== this.oldHeader && el.id !== 'bili-header-container');
+                if (!hasOtherNativeHeader) {
+                    document.body.insertBefore(this.oldHeader, document.body.firstChild);
+                }
+            }
+        });
+        this.bodyObserver.observe(document.body, { childList: true });
+    }
     /** 加载旧版顶栏（隐藏旧目标容器并挂载） */
     protected loadOldHeader(target?: HTMLElement) {
         if (target) {
-            if ((target.className === 'bili-header__bar' || target.classList.contains('bili-header__bar')) && location.host !== "space.bilibili.com") {
+            if ((target.className === 'bili-header__bar' || target.classList.contains('bili-header__bar')) && location.host !== "space.bilibili.com" && location.host !== "t.bilibili.com") {
                 addCss('.bili-header.large-header,.header-channel,.z-top-container.has-menu[type="all"] {display: none;}');
             }
             document.body?.classList.remove('header-v3');
+            target.classList.remove('z-top-container');
             target.style.display = 'none';
             target.hidden = true;
         }
@@ -536,14 +665,20 @@ export class Header {
             this.oldHeader.classList.add('has-menu');
         }
 
+        document.getElementById('bili-header-container')?.classList.remove('z-top-container');
         addCss('#internationalHeader,#biliMainHeader,#bili-header-container{display: none !important;}', 'old-header-hide-base');
-        if (location.host === "space.bilibili.com") {
+        if (location.host === "space.bilibili.com" || location.host === "t.bilibili.com") {
             addCss('.bili-header { display: none !important; } .z-top-container { position: relative; z-index: 1000; }', 'old-space-header-fix');
         }
 
+        const currentDoc = document.documentElement;
         const attachToDom = () => {
+            if (document.documentElement !== currentDoc) return;
             if (document.body && !document.body.contains(this.oldHeader)) {
                 document.body.insertBefore(this.oldHeader, document.body.firstChild);
+            }
+            if (document.body) {
+                this.observeBodyForHeader();
             }
         };
 
@@ -553,8 +688,8 @@ export class Header {
             poll(() => document.body, attachToDom);
         }
 
-        // 若处于脚本加载中，或已挂载且组件子节点已渲染就绪，跳过重复加载外部脚本
-        if (this.isScriptLoading || (this.oldHeadLoaded && document.body && document.body.contains(this.oldHeader) && this.oldHeader.children.length > 0)) {
+        // 若处于脚本加载中，或当前文档已挂载且未失败，跳过重复加载外部脚本
+        if (this.isScriptLoading || (this.oldHeadLoaded && !this.scriptLoadFailed && this.mountedDocElement === currentDoc && document.body?.contains(this.oldHeader))) {
             if (!this.isScriptLoading) {
                 Header.styleFix();
                 if (!Header.isMiniHead(target)) {
@@ -567,15 +702,54 @@ export class Header {
 
         this.oldHeadLoaded = true;
         this.isScriptLoading = true;
+        this.scriptLoadFailed = false;
+        const token = ++this.mountToken;
+        this.mountedDocElement = currentDoc;
 
-        ((<any>window).jQuery ? Promise.resolve() : loadScript("//static.hdslb.com/js/jquery.min.js"))
-            .then(() => loadScript("//s1.hdslb.com/bfs/seed/jinkela/header/header.js"))
+        Header.cleanIncompatibleUserStatus();
+        ((<any>window).jQuery ? Promise.resolve(true) : this.loadScriptWithTimeout("//static.hdslb.com/js/jquery.min.js"))
             .then(() => {
+                if (token !== this.mountToken || document.documentElement !== currentDoc) {
+                    return false;
+                }
+                Header.cleanIncompatibleUserStatus();
+                document.getElementById('bili-header-container')?.classList.remove('z-top-container');
+                if (document.body && !document.body.contains(this.oldHeader)) {
+                    document.body.insertBefore(this.oldHeader, document.body.firstChild);
+                }
+                return this.loadScriptWithTimeout("//s1.hdslb.com/bfs/seed/jinkela/header/header.js");
+            })
+            .then((loaded) => {
+                if (token !== this.mountToken) return;
                 this.isScriptLoading = false;
+                if (!loaded) return;
                 Header.styleFix();
+                window.setTimeout(() => {
+                    if (
+                        token === this.mountToken
+                        && document.documentElement === currentDoc
+                        && document.body?.contains(this.oldHeader)
+                        && this.oldHeader.children.length === 0
+                        && !this.isScriptLoading
+                        && this.retryCount < 1
+                    ) {
+                        this.retryCount++;
+                        this.resetAndMount(target);
+                    }
+                }, 2500);
             })
             .catch(() => {
+                if (token !== this.mountToken) return;
                 this.isScriptLoading = false;
+                this.scriptLoadFailed = true;
+                if (this.retryCount < 1) {
+                    this.retryCount++;
+                    window.setTimeout(() => {
+                        if (token === this.mountToken && document.documentElement === currentDoc) {
+                            this.resetAndMount(target);
+                        }
+                    }, 500);
+                }
             });
 
         if (!Header.isMiniHead(target)) {

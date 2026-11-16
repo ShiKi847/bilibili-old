@@ -2,6 +2,7 @@ import { toast } from "../core/toast";
 import { webpackBlock } from "../utils/hook/webpack";
 import { poll } from "../utils/poll";
 import { VdomTool } from "../utils/vdomtool";
+import { Header } from "./header";
 
 /** 重写页面基类 */
 export abstract class Page {
@@ -54,6 +55,7 @@ export abstract class Page {
         // 刷新DOM
         this.vdom.replace(document.documentElement);
         keepNextHeadMarker && this.restoreNextHeadMarker();
+        Header.onDomReplaced();
         // 还原标题
         title && !title.includes("404") && (document.title = title);
         setTimeout(() => this.loadedCallback());

@@ -14,7 +14,7 @@ export class PageDynamic extends Page {
         user.addCallback(status => {
             if (status.dynamic) {
                 // 重写为旧版动态页
-                this.rewrite();
+                this.rewrite(status.header);
             } else {
                 // 在新版页面基础上应用各项修复
             }
@@ -23,12 +23,13 @@ export class PageDynamic extends Page {
     }
 
     /** 重写为旧版动态页 */
-    protected rewrite() {
+    protected rewrite(hasHeader?: boolean) {
         this.installImageRecovery();
         urlCleaner.updateLocation(location.href);
-        Header.primaryMenu();
-        Header.banner();
         this.updateDom();
+        if (hasHeader) {
+            Header.remount();
+        }
     }
 
     private installImageRecovery() {
