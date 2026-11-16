@@ -263,7 +263,7 @@ export class Header {
                 inst.oldHeadLoaded
                 && !inst.scriptLoadFailed
                 && inst.mountedDocElement === document.documentElement
-                && document.body?.contains(inst.oldHeader)
+                && inst.isOldHeaderPresentInDom()
             ) {
                 return;
             }
@@ -284,7 +284,10 @@ export class Header {
         this.isScriptLoading = false;
         this.scriptLoadFailed = false;
         this.mountedDocElement = null;
-        this.oldHeader.innerHTML = '';
+        this.renderedHeaderEl = null;
+        document.querySelectorAll('#bili-header-m, .bili-header-m').forEach(el => el.remove());
+        this.oldHeader = document.createElement('div');
+        this.oldHeader.className = 'z-top-container has-menu';
         this.loadOldHeader(target ?? (this.findHeaderTarget() || undefined));
     }
     /** 整页 DOM 替换后重置状态并按新文档结构重新挂载 */
@@ -297,15 +300,17 @@ export class Header {
         this.isScriptLoading = false;
         this.scriptLoadFailed = false;
         this.mountedDocElement = null;
+        this.renderedHeaderEl = null;
         this.retryCount = 0;
-        this.oldHeader.innerHTML = '';
+        this.oldHeader = document.createElement('div');
+        this.oldHeader.className = 'z-top-container has-menu';
 
         const target = this.findHeaderTarget();
         if (target) {
             this.loadOldHeader(target);
             return;
         }
-        const hasNativeOldHeader = Array.from(document.querySelectorAll('.z-top-container'))
+        const hasNativeOldHeader = Array.from(document.querySelectorAll('.z-top-container, #bili-header-m, .bili-header-m'))
             .some(el => el !== this.oldHeader && el.id !== 'bili-header-container');
         if (!hasNativeOldHeader) {
             this.hookHeadV2();
@@ -619,20 +624,52 @@ export class Header {
     protected retryCount = 0;
     /** body 直接子节点监听，防止 CSR 水合移除旧版顶栏 */
     protected bodyObserver: MutationObserver | null = null;
-    /** 旧版顶栏节点 */
+    /** 旧版顶栏占位节点（Vue $mount 前） */
     protected oldHeader = document.createElement('div');
+    /** Vue $mount('.z-top-container') 替换生成后的真实顶栏节点（#bili-header-m） */
+    protected renderedHeaderEl: HTMLElement | null = null;
+    /** 获取已由 header.js 渲染上树的 #bili-header-m 节点（并自动去重多余实例） */
+    protected getRenderedOldHeader(): HTMLElement | null {
+        const headers = document.querySelectorAll<HTMLElement>('#bili-header-m, .bili-header-m');
+        if (headers.length > 1) {
+            for (let i = 1; i < headers.length; i++) {
+                headers[i].remove();
+            }
+        }
+        return headers[0] || null;
+    }
+    /** 判断当前文档中旧版顶栏（已渲染的 #bili-header-m 或挂载前的占位 oldHeader）是否已在位 */
+    protected isOldHeaderPresentInDom(): boolean {
+        return Boolean(
+            this.getRenderedOldHeader()
+            || (document.body && document.body.contains(this.oldHeader))
+        );
+    }
     /** 守护 document.body 下的旧版顶栏不被 CSR 水合意外移除 */
     protected observeBodyForHeader() {
         if (!document.body) return;
         this.bodyObserver?.disconnect();
         const observedDoc = document.documentElement;
         this.bodyObserver = new MutationObserver(() => {
-            if (
-                document.documentElement === observedDoc
-                && this.oldHeadLoaded
-                && document.body
-                && !document.body.contains(this.oldHeader)
-            ) {
+            if (document.documentElement !== observedDoc || !this.oldHeadLoaded || !document.body) {
+                return;
+            }
+            // header.js 内部通过 Vue $mount('.z-top-container') 会将 oldHeader 替换为 #bili-header-m
+            const rendered = this.getRenderedOldHeader();
+            if (rendered) {
+                this.renderedHeaderEl = rendered;
+                if (document.body.contains(this.oldHeader)) {
+                    this.oldHeader.remove();
+                }
+                return;
+            }
+            // 若已渲染过的 #bili-header-m 被 CSR 水合移除，直接挂回该实节点
+            if (this.renderedHeaderEl) {
+                document.body.insertBefore(this.renderedHeaderEl, document.body.firstChild);
+                return;
+            }
+            // header.js 尚未完成 $mount 时，若占位节点被移除则挂回占位节点
+            if (!document.body.contains(this.oldHeader)) {
                 const hasOtherNativeHeader = Array.from(document.querySelectorAll('.z-top-container'))
                     .some(el => el !== this.oldHeader && el.id !== 'bili-header-container');
                 if (!hasOtherNativeHeader) {
@@ -668,12 +705,18 @@ export class Header {
         document.getElementById('bili-header-container')?.classList.remove('z-top-container');
         addCss('#internationalHeader,#biliMainHeader,#bili-header-container{display: none !important;}', 'old-header-hide-base');
         if (location.host === "space.bilibili.com" || location.host === "t.bilibili.com") {
-            addCss('.bili-header { display: none !important; } .z-top-container { position: relative; z-index: 1000; }', 'old-space-header-fix');
+            addCss('.bili-header { display: none !important; } .z-top-container, #bili-header-m { position: relative; z-index: 1000; }', 'old-space-header-fix');
         }
 
         const currentDoc = document.documentElement;
         const attachToDom = () => {
             if (document.documentElement !== currentDoc) return;
+            const rendered = this.getRenderedOldHeader();
+            if (rendered) {
+                this.renderedHeaderEl = rendered;
+                if (document.body) this.observeBodyForHeader();
+                return;
+            }
             if (document.body && !document.body.contains(this.oldHeader)) {
                 document.body.insertBefore(this.oldHeader, document.body.firstChild);
             }
@@ -688,8 +731,8 @@ export class Header {
             poll(() => document.body, attachToDom);
         }
 
-        // 若处于脚本加载中，或当前文档已挂载且未失败，跳过重复加载外部脚本
-        if (this.isScriptLoading || (this.oldHeadLoaded && !this.scriptLoadFailed && this.mountedDocElement === currentDoc && document.body?.contains(this.oldHeader))) {
+        // 若处于脚本加载中，或当前文档已挂载（#bili-header-m 或占位节点在位）且未失败，跳过重复加载外部脚本
+        if (this.isScriptLoading || (this.oldHeadLoaded && !this.scriptLoadFailed && this.mountedDocElement === currentDoc && this.isOldHeaderPresentInDom())) {
             if (!this.isScriptLoading) {
                 Header.styleFix();
                 if (!Header.isMiniHead(target)) {
@@ -712,6 +755,9 @@ export class Header {
                 if (token !== this.mountToken || document.documentElement !== currentDoc) {
                     return false;
                 }
+                if (this.getRenderedOldHeader()) {
+                    return true;
+                }
                 Header.cleanIncompatibleUserStatus();
                 document.getElementById('bili-header-container')?.classList.remove('z-top-container');
                 if (document.body && !document.body.contains(this.oldHeader)) {
@@ -723,12 +769,16 @@ export class Header {
                 if (token !== this.mountToken) return;
                 this.isScriptLoading = false;
                 if (!loaded) return;
+                const rendered = this.getRenderedOldHeader();
+                if (rendered) {
+                    this.renderedHeaderEl = rendered;
+                }
                 Header.styleFix();
                 window.setTimeout(() => {
                     if (
                         token === this.mountToken
                         && document.documentElement === currentDoc
-                        && document.body?.contains(this.oldHeader)
+                        && !this.getRenderedOldHeader()
                         && this.oldHeader.children.length === 0
                         && !this.isScriptLoading
                         && this.retryCount < 1

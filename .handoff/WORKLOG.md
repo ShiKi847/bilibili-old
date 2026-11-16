@@ -46,3 +46,10 @@
   2. `src/page/page.ts`：在 `updateDom()` 完成 `this.vdom.replace(document.documentElement)` 后统一调用 `Header.onDomReplaced()`。
   3. `src/page/dynamic.ts`：对齐 `space.ts` 规范，移除冗余的 `Header.primaryMenu()` / `Header.banner()`，在 `rewrite(status.header)` 中幂等调用 `Header.remount()`。
   4. `tampermonkey/manifest.json`：版本号升级至 `10.13.14`，并执行 `npx tsc --noEmit -p chrome/tsconfig.json`、`npm run tampermonkey`、`npm run chrome` 双端零报错构建完成。
+
+
+## [2026-11-16 23:41 +09:00] 修复动态页出现上下双层重复顶栏问题并对齐 Git 直线历史 (v10.13.15)
+- **根因**：经拆解 `jinkela/header/header.js` 源码确认，其内部调用 Vue 2 `Le.$mount(".z-top-container")` 会将 `this.oldHeader` 占位节点直接替换为 `<div id="bili-header-m" class="bili-header-m">`，导致挂载成功后 `document.body.contains(this.oldHeader)` 变为 `false` 且 `this.oldHeader.children.length` 恒为 `0`。`v10.13.14` 的 `observeBodyForHeader` 因此误将空 `this.oldHeader` 重新插回 `body` 顶部，并在 `2500ms` 自检时误触发 `resetAndMount` 二次加载 `header.js` 渲染出第二条 `#bili-header-m`。
+- **改动**：
+  1. `src/page/header.ts`：新增 `getRenderedOldHeader()`（识别 `#bili-header-m, .bili-header-m` 并自动剔除重复节点）与 `isOldHeaderPresentInDom()`；更新 `observeBodyForHeader()` 缓存 `renderedHeaderEl`，在 `#bili-header-m` 在位时不再插回 `oldHeader`；将 `2500ms` 重试条件修正为 `!this.getRenderedOldHeader()`；`resetAndMount()` 重建干净 `oldHeader` 并清理残留 `.bili-header-m`。
+  2. `tampermonkey/manifest.json`：升级至 `10.13.15`，完成 `npm run tampermonkey` 与 `npm run chrome` 双端零报错构建，并按 `merge.ff=only` 直线历史提交同步 `dev-update` 与 `master`。

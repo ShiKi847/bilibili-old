@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Bilibili 旧播放页
 // @namespace    MotooriKashin
-// @version      10.13.14-c3dd748427ccbbefce8d3423714030e5ad97afd7
+// @version      10.13.15-c3dd748427ccbbefce8d3423714030e5ad97afd7
 // @description  恢复Bilibili旧版页面，为了那些念旧的人。
 // @author       MotooriKashin, wly5556, FMPeach, ShiKi847
 // @homepage     https://github.com/ShiKi847/bilibili-old
@@ -26880,11 +26880,10 @@ const MODULES = `
     static instance;
     /** 在 DOM 重构（如 PageSpace.rewrite）后重新挂载顶栏 */
     static remount() {
-      var _a3;
       if (isDynamicNavPage()) return;
       if (_Header.instance) {
         const inst = _Header.instance;
-        if (inst.oldHeadLoaded && !inst.scriptLoadFailed && inst.mountedDocElement === document.documentElement && ((_a3 = document.body) == null ? void 0 : _a3.contains(inst.oldHeader))) {
+        if (inst.oldHeadLoaded && !inst.scriptLoadFailed && inst.mountedDocElement === document.documentElement && inst.isOldHeaderPresentInDom()) {
           return;
         }
         inst.resetAndMount(inst.findHeaderTarget() || void 0);
@@ -26905,7 +26904,10 @@ const MODULES = `
       this.isScriptLoading = false;
       this.scriptLoadFailed = false;
       this.mountedDocElement = null;
-      this.oldHeader.innerHTML = "";
+      this.renderedHeaderEl = null;
+      document.querySelectorAll("#bili-header-m, .bili-header-m").forEach((el) => el.remove());
+      this.oldHeader = document.createElement("div");
+      this.oldHeader.className = "z-top-container has-menu";
       this.loadOldHeader(target != null ? target : this.findHeaderTarget() || void 0);
     }
     /** 整页 DOM 替换后重置状态并按新文档结构重新挂载 */
@@ -26919,14 +26921,16 @@ const MODULES = `
       this.isScriptLoading = false;
       this.scriptLoadFailed = false;
       this.mountedDocElement = null;
+      this.renderedHeaderEl = null;
       this.retryCount = 0;
-      this.oldHeader.innerHTML = "";
+      this.oldHeader = document.createElement("div");
+      this.oldHeader.className = "z-top-container has-menu";
       const target = this.findHeaderTarget();
       if (target) {
         this.loadOldHeader(target);
         return;
       }
-      const hasNativeOldHeader = Array.from(document.querySelectorAll(".z-top-container")).some((el) => el !== this.oldHeader && el.id !== "bili-header-container");
+      const hasNativeOldHeader = Array.from(document.querySelectorAll(".z-top-container, #bili-header-m, .bili-header-m")).some((el) => el !== this.oldHeader && el.id !== "bili-header-container");
       if (!hasNativeOldHeader) {
         this.hookHeadV2();
       }
@@ -27194,8 +27198,26 @@ const MODULES = `
     retryCount = 0;
     /** body 直接子节点监听，防止 CSR 水合移除旧版顶栏 */
     bodyObserver = null;
-    /** 旧版顶栏节点 */
+    /** 旧版顶栏占位节点（Vue \$mount 前） */
     oldHeader = document.createElement("div");
+    /** Vue \$mount('.z-top-container') 替换生成后的真实顶栏节点（#bili-header-m） */
+    renderedHeaderEl = null;
+    /** 获取已由 header.js 渲染上树的 #bili-header-m 节点（并自动去重多余实例） */
+    getRenderedOldHeader() {
+      const headers = document.querySelectorAll("#bili-header-m, .bili-header-m");
+      if (headers.length > 1) {
+        for (let i2 = 1; i2 < headers.length; i2++) {
+          headers[i2].remove();
+        }
+      }
+      return headers[0] || null;
+    }
+    /** 判断当前文档中旧版顶栏（已渲染的 #bili-header-m 或挂载前的占位 oldHeader）是否已在位 */
+    isOldHeaderPresentInDom() {
+      return Boolean(
+        this.getRenderedOldHeader() || document.body && document.body.contains(this.oldHeader)
+      );
+    }
     /** 守护 document.body 下的旧版顶栏不被 CSR 水合意外移除 */
     observeBodyForHeader() {
       var _a3;
@@ -27203,7 +27225,22 @@ const MODULES = `
       (_a3 = this.bodyObserver) == null ? void 0 : _a3.disconnect();
       const observedDoc = document.documentElement;
       this.bodyObserver = new MutationObserver(() => {
-        if (document.documentElement === observedDoc && this.oldHeadLoaded && document.body && !document.body.contains(this.oldHeader)) {
+        if (document.documentElement !== observedDoc || !this.oldHeadLoaded || !document.body) {
+          return;
+        }
+        const rendered = this.getRenderedOldHeader();
+        if (rendered) {
+          this.renderedHeaderEl = rendered;
+          if (document.body.contains(this.oldHeader)) {
+            this.oldHeader.remove();
+          }
+          return;
+        }
+        if (this.renderedHeaderEl) {
+          document.body.insertBefore(this.renderedHeaderEl, document.body.firstChild);
+          return;
+        }
+        if (!document.body.contains(this.oldHeader)) {
           const hasOtherNativeHeader = Array.from(document.querySelectorAll(".z-top-container")).some((el) => el !== this.oldHeader && el.id !== "bili-header-container");
           if (!hasOtherNativeHeader) {
             document.body.insertBefore(this.oldHeader, document.body.firstChild);
@@ -27228,7 +27265,7 @@ const MODULES = `
     }
     /** 核心挂载逻辑（支持重入与 DOM 重建后恢复） */
     mountOldHeader(target) {
-      var _a3, _b2;
+      var _a3;
       this.oldHeader.classList.add("z-top-container");
       if (_Header.isMiniHead(target)) {
         this.miniHeader();
@@ -27238,11 +27275,17 @@ const MODULES = `
       (_a3 = document.getElementById("bili-header-container")) == null ? void 0 : _a3.classList.remove("z-top-container");
       addCss("#internationalHeader,#biliMainHeader,#bili-header-container{display: none !important;}", "old-header-hide-base");
       if (location.host === "space.bilibili.com" || location.host === "t.bilibili.com") {
-        addCss(".bili-header { display: none !important; } .z-top-container { position: relative; z-index: 1000; }", "old-space-header-fix");
+        addCss(".bili-header { display: none !important; } .z-top-container, #bili-header-m { position: relative; z-index: 1000; }", "old-space-header-fix");
       }
       const currentDoc = document.documentElement;
       const attachToDom = () => {
         if (document.documentElement !== currentDoc) return;
+        const rendered = this.getRenderedOldHeader();
+        if (rendered) {
+          this.renderedHeaderEl = rendered;
+          if (document.body) this.observeBodyForHeader();
+          return;
+        }
         if (document.body && !document.body.contains(this.oldHeader)) {
           document.body.insertBefore(this.oldHeader, document.body.firstChild);
         }
@@ -27255,7 +27298,7 @@ const MODULES = `
       } else {
         poll(() => document.body, attachToDom);
       }
-      if (this.isScriptLoading || this.oldHeadLoaded && !this.scriptLoadFailed && this.mountedDocElement === currentDoc && ((_b2 = document.body) == null ? void 0 : _b2.contains(this.oldHeader))) {
+      if (this.isScriptLoading || this.oldHeadLoaded && !this.scriptLoadFailed && this.mountedDocElement === currentDoc && this.isOldHeaderPresentInDom()) {
         if (!this.isScriptLoading) {
           _Header.styleFix();
           if (!_Header.isMiniHead(target)) {
@@ -27276,6 +27319,9 @@ const MODULES = `
         if (token !== this.mountToken || document.documentElement !== currentDoc) {
           return false;
         }
+        if (this.getRenderedOldHeader()) {
+          return true;
+        }
         _Header.cleanIncompatibleUserStatus();
         (_a4 = document.getElementById("bili-header-container")) == null ? void 0 : _a4.classList.remove("z-top-container");
         if (document.body && !document.body.contains(this.oldHeader)) {
@@ -27286,10 +27332,13 @@ const MODULES = `
         if (token !== this.mountToken) return;
         this.isScriptLoading = false;
         if (!loaded) return;
+        const rendered = this.getRenderedOldHeader();
+        if (rendered) {
+          this.renderedHeaderEl = rendered;
+        }
         _Header.styleFix();
         window.setTimeout(() => {
-          var _a4;
-          if (token === this.mountToken && document.documentElement === currentDoc && ((_a4 = document.body) == null ? void 0 : _a4.contains(this.oldHeader)) && this.oldHeader.children.length === 0 && !this.isScriptLoading && this.retryCount < 1) {
+          if (token === this.mountToken && document.documentElement === currentDoc && !this.getRenderedOldHeader() && this.oldHeader.children.length === 0 && !this.isScriptLoading && this.retryCount < 1) {
             this.retryCount++;
             this.resetAndMount(target);
           }
